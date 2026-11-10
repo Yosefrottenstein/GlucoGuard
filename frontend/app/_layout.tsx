@@ -5,6 +5,7 @@ import { LogBox, StyleSheet } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 
+import { AlarmWatcher } from "@/src/components/AlarmWatcher";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { SensorCollector } from "@/src/components/SensorCollector";
 import { ToastProvider } from "@/src/components/Toast";
@@ -31,6 +32,7 @@ export default function RootLayout() {
           <KeyboardProvider>
             <ToastProvider>
               <SensorCollector />
+              <AlarmWatcher />
               <Stack screenOptions={{ headerShown: false }} />
             </ToastProvider>
           </KeyboardProvider>

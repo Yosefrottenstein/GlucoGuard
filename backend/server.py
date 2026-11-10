@@ -177,11 +177,28 @@ async def sync_loop():
 
 
 # ---------------- alarms & emergency ----------------
-ALARM_LABELS = {"urgent_low": "URGENT LOW", "low": "LOW", "high": "HIGH", "urgent_high": "URGENT HIGH",
-                "missed": "MISSED READINGS"}
+ALARM_LABELS = {"extreme_low": "EXTREME LOW", "urgent_low": "URGENT LOW", "low": "LOW", "high": "HIGH",
+                "urgent_high": "URGENT HIGH", "missed": "MISSED READINGS"}
+def alarm_label(kind: str, s: AppSettings) -> str:
+    if kind.startswith("custom:"):
+        ga = next((g for g in s.glucose_alarms if f"custom:{g.id}" == kind), None)
+        return ga.title.upper() if ga else "ALARM"
+    return ALARM_LABELS.get(kind, kind.upper())
+
+
+def snooze_for(kind: str, s: AppSettings) -> int:
+    if kind.startswith("custom:"):
+        ga = next((g for g in s.glucose_alarms if f"custom:{g.id}" == kind), None)
+        return ga.snooze_minutes if ga else s.snooze_minutes
+    cfg = s.alarm_sounds.get(kind)
+    return cfg.snooze_minutes if cfg else s.snooze_minutes
+
+
+EXTREME_LOW = 50  # mg/dL (2.8 mmol/L)
 
 
 def classify(sgv: int, s: AppSettings) -> Optional[str]:
+    if sgv < EXTREME_LOW and s.alarm_extreme_low: return "extreme_low"
     if sgv <= s.urgent_low: return "urgent_low"
     if sgv < s.low: return "low"
     if sgv >= s.urgent_high: return "urgent_high"
@@ -209,6 +226,12 @@ async def check_alarms(s: AppSettings) -> None:
             level = classify(last.sgv, s)
             if level and not getattr(s, f"alarm_{level}"):
                 level = None
+            if not level:  # user-made glucose alarms, checked after the presets
+                for ga in s.glucose_alarms:
+                    if ga.enabled and ((ga.direction == "below" and last.sgv < ga.value) or
+                                       (ga.direction == "above" and last.sgv > ga.value)):
+                        level = f"custom:{ga.id}"
+                        break
     alarm = await get_state("alarm")
     reset = {"emergency_sent_at": None, "em_sms_sent_at": None, "em_call_sent_at": None}
     if not level:
@@ -222,7 +245,8 @@ async def check_alarms(s: AppSettings) -> None:
         await set_state("alarm", alarm)
 
     snoozed = alarm.get("snoozed_until") and alarm["snoozed_until"] > now and alarm.get("snoozed_type") == level
-    if (s.em_enabled and s.source != "demo" and level in s.em_triggers and not snoozed and s.em_contacts
+    em_match = level in s.em_triggers or (level == "extreme_low" and bool({"urgent_low", "low"} & set(s.em_triggers)))
+    if (s.em_enabled and s.source != "demo" and em_match and not snoozed and s.em_contacts
             and now - alarm["started_at"] >= timedelta(minutes=s.em_delay_minutes)):
         # Resend each channel on its own interval while glucose stays at this level.
         due = set()
@@ -238,7 +262,7 @@ async def check_alarms(s: AppSettings) -> None:
                 logger.error("emergency send failed: %s", getattr(exc, "detail", exc))
 
 
-LEVEL_WORDS = {"urgent_low": "very low", "low": "low", "high": "high", "urgent_high": "very high"}
+LEVEL_WORDS = {"extreme_low": "extremely low", "urgent_low": "very low", "low": "low", "high": "high", "urgent_high": "very high"}
 
 
 async def build_message(s: AppSettings, reading: Optional[Reading], test: bool, level: str) -> tuple[str, str]:
@@ -392,10 +416,15 @@ async def status():
     if alarm.get("type"):
         snoozed = bool(alarm.get("snoozed_until") and alarm["snoozed_until"] > now_utc()
                        and alarm.get("snoozed_type") == alarm["type"])
-        active = {"type": alarm["type"], "label": ALARM_LABELS[alarm["type"]], "started_at": alarm["started_at"],
+        active = {"type": alarm["type"], "label": alarm_label(alarm["type"], s), "started_at": alarm["started_at"],
+                  "snooze_minutes": snooze_for(alarm["type"], s),
                   "snoozed": snoozed, "snoozed_until": alarm.get("snoozed_until") if snoozed else None,
                   "emergency_sent_at": alarm.get("emergency_sent_at")}
-    return {"reading": reading, "delta": delta, "source": s.source, "unit": s.unit,
+    sensor = None
+    if s.sensor_started_at:
+        sensor = {"started_at": s.sensor_started_at,
+                  "ends_at": s.sensor_started_at + timedelta(days=s.sensor_days), "days": s.sensor_days}
+    return {"reading": reading, "delta": delta, "source": s.source, "unit": s.unit, "sensor": sensor,
             "last_sync": sync.get("last_sync"), "last_error": sync.get("last_error"),
             "upload_errors": sync.get("upload_errors") or {}, "alarm": active,
             "thresholds": {"urgent_low": s.urgent_low, "low": s.low, "high": s.high, "urgent_high": s.urgent_high,
@@ -551,7 +580,7 @@ async def ack_alarm(body: AckIn):
     alarm = await get_state("alarm")
     if not alarm.get("type"):
         return {"ok": True}
-    until = now_utc() + timedelta(minutes=body.minutes or s.snooze_minutes)
+    until = now_utc() + timedelta(minutes=body.minutes or snooze_for(alarm["type"], s))
     await set_state("alarm", {"snoozed_until": until, "snoozed_type": alarm["type"]})
     return {"ok": True, "snoozed_until": until}
 

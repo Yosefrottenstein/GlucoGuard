@@ -77,6 +77,8 @@ export function parseG7Glucose(bytes: Uint8Array, receivedAt: number) {
   return {
     sequence: u16(6),
     algorithm,
+    // bytes 2-5: seconds since the sensor was started -> sensor start time
+    activatedAt: new Date(receivedAt - (bytes[2] | (bytes[3] << 8) | (bytes[4] << 16) | ((bytes[5] << 24) >>> 0)) * 1000),
     sgv: raw === 0xffff || algorithm !== 6 ? null : raw & 0xfff,
     ts: new Date(receivedAt - u16(10) * 1000).toISOString(),
     direction: trendToDirection(trend),
@@ -85,6 +87,10 @@ export function parseG7Glucose(bytes: Uint8Array, receivedAt: number) {
 
 let running = false;
 let connecting = false;
+let activationHandler: ((d: Date) => void) | null = null;
+export const setG7ActivationHandler = (fn: (d: Date) => void) => {
+  activationHandler = fn;
+};
 let timer: ReturnType<typeof setTimeout> | null = null;
 let subs: { remove: () => void }[] = [];
 let pending: { ts: string; sgv: number; direction: string }[] = [];
@@ -109,6 +115,7 @@ function onControl(b64: string | null | undefined) {
   if (!msg || msg.sequence === lastSequence) return;
   lastSequence = msg.sequence;
   setStatus({ sensorState: STATES[msg.algorithm] ?? `State ${msg.algorithm}` });
+  activationHandler?.(msg.activatedAt);
   if (msg.sgv === null) return;
   pending.push({ ts: msg.ts, sgv: msg.sgv, direction: msg.direction });
   setStatus({ lastValue: msg.sgv, lastReadingAt: Date.now() });

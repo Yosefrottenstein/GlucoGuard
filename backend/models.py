@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated, Literal, Optional
 
 from bson import ObjectId
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 PyObjectId = Annotated[str, BeforeValidator(lambda v: str(v) if isinstance(v, ObjectId) else v)]
 
@@ -68,6 +68,47 @@ class Contact(BaseModel):
     call: ChannelSchedule = ChannelSchedule()
 
 
+class AlarmSound(BaseModel):
+    style: Literal["sound", "vibrate", "both"] = "both"
+    sound: Literal["classic", "chime", "siren", "pulse", "gentle", "alert"] = "classic"
+    repeat_minutes: int = Field(default=1, ge=1, le=120)  # re-alert interval while the alarm is active
+    snooze_minutes: int = Field(default=30, ge=1, le=720)
+
+
+class GlucoseAlarm(BaseModel):
+    id: str = Field(min_length=1, max_length=40)
+    title: str = Field(min_length=1, max_length=60)
+    direction: Literal["below", "above"] = "below"
+    value: int = Field(ge=40, le=400)  # mg/dL
+    enabled: bool = True
+    style: Literal["sound", "vibrate", "both"] = "both"
+    sound: Literal["classic", "chime", "siren", "pulse", "gentle", "alert"] = "classic"
+    repeat_minutes: int = Field(default=5, ge=1, le=120)
+    snooze_minutes: int = Field(default=30, ge=1, le=720)
+
+
+class Reminder(BaseModel):
+    id: str = Field(min_length=1, max_length=40)
+    title: str = Field(min_length=1, max_length=80)
+    time: str = Field(pattern=HHMM)
+    repeat: Literal["daily", "once"] = "daily"
+    date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    enabled: bool = True
+    style: Literal["sound", "vibrate", "both"] = "both"
+    sound: Literal["classic", "chime", "siren", "pulse", "gentle", "alert"] = "chime"
+
+
+def default_alarm_sounds() -> dict:
+    return {
+        "extreme_low": AlarmSound(style="sound", sound="siren"),
+        "urgent_low": AlarmSound(style="both", sound="siren"),
+        "low": AlarmSound(style="both", sound="classic"),
+        "high": AlarmSound(style="both", sound="chime"),
+        "urgent_high": AlarmSound(style="both", sound="alert"),
+        "missed": AlarmSound(style="vibrate", sound="gentle"),
+    }
+
+
 SECRET_FIELDS = ("ns_secret", "dexcom_password", "libre_password", "tp_password")
 
 
@@ -79,6 +120,25 @@ class AppSettings(BaseModel):
     bt_transmitter_id: str = ""
     bt_device_id: str = ""
     bt_device_name: str = ""
+    # sensor session
+    sensor_started_at: Optional[datetime] = None
+    sensor_days: float = Field(default=10.5, gt=0, le=30)
+    sensor_warn_enabled: bool = True
+    sensor_warn_offsets: list[int] = [1440, 720, 360, 60, 30]  # minutes before the end
+    sensor_warn_style: Literal["sound", "vibrate", "both"] = "both"
+    sensor_warn_sound: Literal["classic", "chime", "siren", "pulse", "gentle", "alert"] = "chime"
+    # alarm sounds per level; extreme low (< 50 mg/dL) is always sound only
+    alarm_extreme_low: bool = True
+    alarm_sounds: dict[str, AlarmSound] = Field(default_factory=default_alarm_sounds)
+    reminders: list[Reminder] = Field(default=[], max_length=50)
+    glucose_alarms: list[GlucoseAlarm] = Field(default=[], max_length=30)
+
+    @model_validator(mode="after")
+    def _fill_sounds(self):
+        merged = {**default_alarm_sounds(), **self.alarm_sounds}
+        merged["extreme_low"] = merged["extreme_low"].model_copy(update={"style": "sound"})
+        self.alarm_sounds = merged
+        return self
     # target range for graph colours and time-in-range, always mg/dL
     target_low: int = 70
     target_high: int = 180

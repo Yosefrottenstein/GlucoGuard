@@ -1,4 +1,29 @@
+import type { AlarmSound, AlertStyle, SoundId } from "./sounds";
+
 const BASE = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api`;
+
+export type GlucoseAlarm = {
+  id: string;
+  title: string;
+  direction: "below" | "above";
+  value: number;
+  enabled: boolean;
+  style: AlertStyle;
+  sound: SoundId;
+  repeat_minutes: number;
+  snooze_minutes: number;
+};
+
+export type Reminder = {
+  id: string;
+  title: string;
+  time: string;
+  repeat: "daily" | "once";
+  date: string | null;
+  enabled: boolean;
+  style: AlertStyle;
+  sound: SoundId;
+};
 
 export type Unit = "mgdl" | "mmol";
 export type Source = "demo" | "manual" | "bluetooth" | "nightscout" | "dexcom" | "libre";
@@ -11,6 +36,7 @@ export type Alarm = {
   type: string;
   label: string;
   started_at: string;
+  snooze_minutes: number;
   snoozed: boolean;
   snoozed_until: string | null;
   emergency_sent_at: string | null;
@@ -26,6 +52,7 @@ export type Status = {
   upload_errors: Record<string, string>;
   alarm: Alarm | null;
   thresholds: Thresholds;
+  sensor: { started_at: string; ends_at: string; days: number } | null;
 };
 
 export type Treatment = {
@@ -57,6 +84,16 @@ export type Contact = { name: string; phone: string; sms: ChannelSchedule; call:
 export type Settings = Thresholds & {
   unit: Unit;
   source: Source;
+  sensor_started_at: string | null;
+  sensor_days: number;
+  sensor_warn_enabled: boolean;
+  sensor_warn_offsets: number[];
+  sensor_warn_style: "sound" | "vibrate" | "both";
+  sensor_warn_sound: SoundId;
+  alarm_extreme_low: boolean;
+  alarm_sounds: Record<string, AlarmSound>;
+  reminders: Reminder[];
+  glucose_alarms: GlucoseAlarm[];
   bt_sensor: SensorType;
   bt_transmitter_id: string;
   bt_device_id: string;

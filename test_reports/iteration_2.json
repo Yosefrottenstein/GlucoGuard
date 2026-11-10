@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 2: 45/45 backend pytest tests pass (27 iter1 regression + 18 new iter2). New backend coverage: target_low/target_high (422 when low>=high, valid persist, surfaced in /api/status.thresholds), alarm_sounds with extreme_low style forced to 'sound', reminders (422 bad HH:MM, persist), glucose_alarms (422 out-of-range, custom:<id> triggers after POST /api/sync, ack snoozes using the alarm's own snooze_minutes), Emergency v2 (em_sms_schedule/em_call_schedule modes, per-contact sms/call schedules, em_triggers list with 422 on invalid trigger, 422 on bad E.164 phone, em_sms_repeat_minutes/em_call_repeat_minutes, friendly 400 when Twilio keys missing), sensor_started_at + sensor_days persist and surface in /api/status.sensor {started_at, ends_at, days}, 422 when sensor_days out of 0..30, /api/readings/batch inserts bluetooth readings (422 on bad sgv), /api/stats TIR.in_range widens when target range widens. Frontend (mobile 390x844, Expo web): Follower/Master chip toggle correctly swaps source list (demo/manual/bluetooth vs nightscout/dexcom/libre). Target range inputs (testIDs target-target_low/target-target_high) render; switching unit converts 70 mg/dL -> 3.9 mmol/L. Sensor section inputs (sensor-started-input, sensor-started-now-button, sensor-warn-toggle, sensor-warn-sound-button) all present. Alarm note icon opens alarm-sound-sheet with 'Sound only' lock visible for extreme_low. Add glucose alarm -> glucose-alarm-row-0 appears. Add reminder -> reminder-row-0 appears. Emergency: enabling shows SMS + call toggles + emergency-sms-repeat-input. Add-contact sheet opens with per-contact schedule inputs. Settings-save-button persists and shows 'Settings saved' toast. With sensor_started_at set, Home chart shows a 'Sensor has ended'/'Sensor ends in N days' notice under the chart (correctly shows 'Sensor has ended' when past ends_at) and Stats shows the Sensor card with Started on / Ends on rows and TIR using the target range (84% in 70-180). Chart tooltip still available on tap. Deprecated packages detected: expo-router/unstable-native-tabs (still used). Final RESTORE PUT /api/settings succeeded: source=demo, unit=mgdl, em_contacts=[], glucose_alarms=[], reminders=[], alarm_sounds reset, em_enabled=false, target_low=70, target_high=180, sensor_started_at=null.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "tabs layout", "issue": "Deprecated: `expo-router/unstable-native-tabs` is still being used. Switch to `expo-router/native-tabs`. Reference: /app/frontend/app/(tabs)/_layout.tsx"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_xdrip_api.py",
+    "/app/backend/tests/test_xdrip_iter2.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_results_iter2.xml"
+  ],
+  "action_items": [
+    "Non-blocking: migrate `expo-router/unstable-native-tabs` import to `expo-router/native-tabs`.",
+    "Non-blocking: /app/frontend/app/(tabs)/settings.tsx is 1140 lines - consider splitting into feature modules (sensor, alarms, emergency, uploads) to stay under the 700-line guideline."
+  ],
+  "critical_code_review_comments": [
+    "settings.tsx > 700 lines (1140). Split into sub-screens/components (SensorSection, AlarmsSection, EmergencySection, UploadsSection) to improve maintainability.",
+    "models.AppSettings: the @model_validator `_fill_sounds` is declared BEFORE the target_low/target_high fields in the class body. It still works (validators run after fields are collected), but moving it below the field declarations would match Pydantic conventions and reader expectations.",
+    "server.send_emergency imports twilio.rest at call time (good), but Twilio Client and TwiML call share the same error path; the user-facing 400 message 'Text and call service is not set up yet (Twilio keys missing).' is only raised when ALL three env vars are missing - if one is set but others are missing the message is still correct but worth a per-key check.",
+    "check_alarms: when a `custom:<id>` alarm is active and the underlying GlucoseAlarm is later removed from settings, `alarm_label` falls back to 'ALARM' but snooze_for falls back to s.snooze_minutes - consider clearing the alarm state on settings save when the referenced glucose alarm id disappears."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_xdrip_iter2.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_results_iter2.xml"
+  ],
+  "success_rate": {"backend": "100% (45/45)", "frontend": "100% of new flows verified on web preview"},
+  "seed_data_creation": "Only transient TEST_ records created during tests (one TEST_UI glucose alarm and one TEST_rem reminder via UI, plus TEST_ga1/TEST_r1/TEST_cv2 via API). All removed by the final RESTORE PUT /api/settings which reset source=demo, unit=mgdl, em_contacts=[], glucose_alarms=[], reminders=[], alarm_sounds={}, em_enabled=false, target_low=70, target_high=180, sensor_started_at=null. Verified via GET.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suites: /app/backend/tests/test_xdrip_api.py (27 tests, iter1 core) and /app/backend/tests/test_xdrip_iter2.py (18 tests, iter2 features). Full run ~10s, all pass. IMPORTANT selector notes for iter2: (1) Target range testIDs are `target-target_low` and `target-target_high` (NOT target-low/target-high). (2) Follower/Master chip is a text chip with label 'Follower'/'Master' (not testID-prefixed in the current build); tap it first to reveal nightscout/dexcom/libre source chips (follower) or demo/manual/bluetooth (master). (3) Sensor testIDs: sensor-started-input, sensor-started-now-button, sensor-warn-toggle, sensor-warn-sound-button. (4) Per-preset alarm sound button testID: alarm-sound-<kind> (extreme_low, urgent_low, low, high, urgent_high, missed); opens alarm-sound-sheet; 'Done' = alarm-sound-done-button. (5) Glucose alarm sheet: glucose-alarm-add-button -> glucose-alarm-sheet -> glucose-alarm-title-input + glucose-alarm-value-input -> glucose-alarm-save-button; row appears at glucose-alarm-row-0. (6) Reminder flow identical with reminder-* prefix. (7) Emergency: emergency-enabled-toggle, emergency-sms-toggle (reveals emergency-sms-repeat-input), emergency-call-toggle (reveals emergency-call-repeat-input), emergency-add-contact-button, emergency-test-button. (8) To test 'Sensor ends' home notice, set sensor_started_at via PUT /api/settings (not via UI date picker on web). Current server date is 2026-11-10 UTC so any January 2026 start date will show 'Sensor has ended'. Use a start date within last few days with sensor_days >= 14 to see 'Sensor ends in N days'. (9) The settings-save-button changes source to current `draft.source`, so if the user tapped Master chip without picking a source, source is persisted as whatever is currently highlighted (bluetooth in this build). Expected behavior; just be careful when scripting save during exploratory tests.",
+  "rca_of_issue": "No bugs found in iter2 scope. One expected-behavior gotcha: 'Sensor has ended' vs 'Sensor ends in N days' - the home-under-chart notice correctly reflects whether now() is past started_at + sensor_days. All 45 backend tests and all targeted frontend flows passed on the public EXPO_PUBLIC_BACKEND_URL."
+}

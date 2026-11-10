@@ -19,6 +19,7 @@ import { usesNativeTabs } from "@/src/navigation";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 import { useLocationReporter } from "@/src/useLocationReporter";
 import { useG7Status } from "@/src/g7";
+import { sensorEndsText } from "@/src/sensorAlerts";
 
 const RANGES = [
   { value: "3", label: "3h" },
@@ -69,9 +70,6 @@ export default function Home() {
   });
 
   const alarm = status.data?.alarm;
-  useEffect(() => {
-    if (alarm && !alarm.snoozed) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-  }, [alarm, status.dataUpdatedAt]);
 
   const snooze = useMutation({
     mutationFn: () => api("/alarm/ack", { method: "POST", body: {} }),
@@ -112,7 +110,7 @@ export default function Home() {
   const r = s.reading;
   const stale = r ? minutesAgo(r.ts) > 15 : true;
   const valueColor = r && !stale ? levelColor(r.sgv, s.thresholds, colors) : colors.muted;
-  const alarmColor = alarm && ["low", "urgent_low", "missed"].includes(alarm.type) ? colors.error : colors.warning;
+  const alarmColor = alarm && ["extreme_low", "low", "urgent_low", "missed"].includes(alarm.type) ? colors.error : colors.warning;
 
   return (
     <View style={styles.root}>
@@ -139,7 +137,7 @@ export default function Home() {
             </Text>
           </View>
           <Pressable testID="alarm-snooze-button" onPress={() => snooze.mutate()} style={styles.snoozeBtn}>
-            <Text style={styles.snoozeText}>Snooze</Text>
+            <Text style={styles.snoozeText}>Snooze {alarm.snooze_minutes}m</Text>
           </Pressable>
         </Animated.View>
       )}
@@ -200,6 +198,17 @@ export default function Home() {
               unit={unit}
             />
             <Text style={styles.chartHint}>Tap a dot to see its value and time</Text>
+            {s.sensor ? (
+              <Text
+                testID="home-sensor-ends"
+                style={[
+                  styles.sensorNotice,
+                  Date.parse(s.sensor.ends_at) - Date.now() < 86400000 && { color: colors.error, fontWeight: "700" },
+                ]}
+              >
+                {sensorEndsText(s.sensor.ends_at)}
+              </Text>
+            ) : null}
           </Card>
         </Animated.View>
 
@@ -317,6 +326,7 @@ const useStyles = makeStyles((c) => ({
   muted: { fontFamily: fonts.text, fontSize: 14, color: c.muted },
   errorText: { fontFamily: fonts.text, fontSize: 13, color: c.error, marginTop: spacing.sm },
   chartHint: { fontFamily: fonts.text, fontSize: 11, color: c.muted, textAlign: "center", marginTop: spacing.xs },
+  sensorNotice: { fontFamily: fonts.text, fontSize: 12, color: c.onSurfaceTertiary, textAlign: "center", marginTop: 2 },
   statsRow: { flexDirection: "row", gap: spacing.md },
   mini: { flex: 1, backgroundColor: c.surfaceSecondary, borderRadius: radius.md, padding: spacing.md },
   miniValue: { fontFamily: fonts.display, fontSize: 22, fontWeight: "700", color: c.onSurface },

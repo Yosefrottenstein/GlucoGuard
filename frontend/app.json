@@ -72,6 +72,20 @@
         {
           "contactsPermission": "Pick emergency contacts from your address book"
         }
+      ],
+      "expo-audio",
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/sounds/classic.wav",
+            "./assets/sounds/chime.wav",
+            "./assets/sounds/siren.wav",
+            "./assets/sounds/pulse.wav",
+            "./assets/sounds/gentle.wav",
+            "./assets/sounds/alert.wav"
+          ]
+        }
       ]
     ],
     "experiments": {

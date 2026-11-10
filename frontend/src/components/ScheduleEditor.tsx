@@ -7,7 +7,7 @@ import { ChipRow } from "./ChipRow";
 const NIGHT = { start: "00:00", end: "07:00" };
 
 // Formats typed digits as HH:MM
-const asTime = (text: string) => {
+export const asTime = (text: string) => {
   const d = text.replace(/\D/g, "").slice(0, 4);
   return d.length > 2 ? `${d.slice(0, 2)}:${d.slice(2)}` : d;
 };

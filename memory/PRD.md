@@ -34,3 +34,7 @@ tap a dot on the chart to see value + time, compatible with as many sensors as p
   posts to /api/readings/batch with offline queue. SensorCollector mounted in root layout. Needs TestFlight build to test.
 - Backlog: G7 backfill (missed readings), Libre 2 direct (NFC unlock + decryption), Dexcom Share upload.
 - Separate target range (target_low/high, unit-aware) for graph dot colours + TIR; colours red low / sky blue in range / yellow high (2026-11-10)
+- Sensor session (start/length, local-notification reminders 24h/12h/6h/1h/30m, Home notice, Stats card; G7 auto-detects start).
+- Alarm sounds: 6 bundled sounds, per preset alarm style/sound/repeat/snooze; extreme low (<50 mg/dL) sound-only.
+- Custom reminders (daily/once) and custom glucose alarms (below/above value) with own sound/repeat/snooze.
+- Iteration 2 tests: 45/45 backend, frontend flows pass.

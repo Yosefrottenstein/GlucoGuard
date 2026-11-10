@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { addDays, startOfDay } from "date-fns";
+import { addDays, format, startOfDay } from "date-fns";
 import { useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import Animated, { FadeInDown } from "react-native-reanimated";
@@ -10,6 +10,7 @@ import { ChipRow } from "@/src/components/ChipRow";
 import { Card } from "@/src/components/ui";
 import { toDisplay, unitLabel } from "@/src/glucose";
 import { usesNativeTabs } from "@/src/navigation";
+import { sensorEndsText } from "@/src/sensorAlerts";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 const PERIODS = [
@@ -66,6 +67,24 @@ export default function StatsScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: bottomChrome + 24, gap: spacing.lg }}>
+          {status.data?.sensor && (
+            <Card testID="stats-sensor-card">
+              <Text style={styles.cardTitle}>Sensor</Text>
+              <View style={styles.legendRow}>
+                <Text style={styles.legend}>Started on</Text>
+                <Text style={styles.legendValue} testID="stats-sensor-started">
+                  {format(new Date(status.data.sensor.started_at), "EEE, MMM d · HH:mm")}
+                </Text>
+              </View>
+              <View style={[styles.legendRow, { marginTop: spacing.sm }]}>
+                <Text style={styles.legend}>Ends on</Text>
+                <Text style={styles.legendValue} testID="stats-sensor-ends">
+                  {format(new Date(status.data.sensor.ends_at), "EEE, MMM d · HH:mm")}
+                </Text>
+              </View>
+              <Text style={[styles.footnote, { textAlign: "left", marginTop: spacing.sm }]}>{sensorEndsText(status.data.sensor.ends_at)}</Text>
+            </Card>
+          )}
           <Animated.View entering={FadeInDown.duration(350)}>
             <Card testID="tir-card">
               <Text style={styles.cardTitle}>Time in range</Text>
