@@ -170,7 +170,9 @@ export default function Home() {
               </>
             ) : (
               <Text style={styles.muted} testID="no-readings-text">
-                No readings yet. Pick a data source in Settings.
+                {s.source === "bluetooth"
+                  ? "Bluetooth sensor selected. Live readings from the sensor are coming in the next step; use Follower mode meanwhile."
+                  : "No readings yet. Pick a data source in Settings."}
               </Text>
             )}
             {s.last_error ? (

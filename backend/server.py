@@ -21,7 +21,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 from models import (SECRET_FIELDS, AckIn, AppSettings, EmergencyLog, LocationIn, Reading,  # noqa: E402
-                    ReadingIn, SummaryIn, Treatment, TreatmentIn)
+                    ReadingBatchIn, ReadingIn, SummaryIn, Treatment, TreatmentIn)
 from sources import demo_readings, direction_from_slope, fetch_source, reset_sessions  # noqa: E402
 from uploads import upload_nightscout, upload_tidepool  # noqa: E402
 
@@ -384,6 +384,15 @@ async def add_reading(body: ReadingIn):
     r.id = str(res.inserted_id)
     asyncio.create_task(check_alarms(await get_settings()))
     return r.model_dump(exclude={"ns_uploaded", "tp_uploaded"})
+
+
+@api.post("/readings/batch")
+async def add_reading_batch(body: ReadingBatchIn):
+    """Readings collected by the phone from a Bluetooth sensor (Master mode)."""
+    items = [{"ts": r.ts.astimezone(timezone.utc), "sgv": r.sgv, "direction": r.direction} for r in body.readings]
+    added = await insert_readings(items, "bluetooth")
+    asyncio.create_task(check_alarms(await get_settings()))
+    return {"added": added}
 
 
 @api.get("/treatments")

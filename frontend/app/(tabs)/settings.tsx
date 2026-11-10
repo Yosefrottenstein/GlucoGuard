@@ -1,12 +1,14 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import * as Location from "expo-location";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Linking, Modal, Pressable, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, Settings, Source, Status, Unit } from "@/src/api";
+import { api, SensorType, Settings, Source, Status, Unit } from "@/src/api";
+import { SENSORS } from "@/src/ble";
 import { ChipRow } from "@/src/components/ChipRow";
 import { useToast } from "@/src/components/Toast";
 import { Button, Card, Field, Hint, SectionTitle, ToggleRow } from "@/src/components/ui";
@@ -24,13 +26,19 @@ const THR: { key: ThrKey; label: string }[] = [
 type SecretKey = "ns_secret" | "dexcom_password" | "libre_password" | "tp_password";
 const EMPTY_SECRETS: Record<SecretKey, string> = { ns_secret: "", dexcom_password: "", libre_password: "", tp_password: "" };
 
-const SOURCES: { value: Source; title: string; sub: string }[] = [
+type SourceOpt = { value: Source; title: string; sub: string };
+const FOLLOWER: SourceOpt[] = [
   { value: "dexcom", title: "Dexcom Share", sub: "Dexcom G6, G7, ONE, ONE+ and Stelo with Share turned on" },
   { value: "libre", title: "LibreLinkUp", sub: "FreeStyle Libre 2, 2 Plus, 3 and 3 Plus" },
   { value: "nightscout", title: "Nightscout", sub: "Medtronic (CareLink), Eversense, Medtrum, AAPS, Loop and any uploader" },
+];
+const MASTER: SourceOpt[] = [
+  { value: "bluetooth", title: "Bluetooth sensor", sub: "Talk to the sensor directly, then upload to Nightscout and Tidepool" },
   { value: "manual", title: "Manual entry", sub: "Type finger-stick or sensor values yourself" },
   { value: "demo", title: "Demo sensor", sub: "Realistic sample data to try the app" },
 ];
+const isFollower = (s: Source) => FOLLOWER.some((o) => o.value === s);
+const SENSOR_OPTIONS = (Object.keys(SENSORS) as SensorType[]).map((k) => ({ value: k, label: SENSORS[k].label }));
 
 export default function SettingsScreen() {
   const styles = useStyles();
@@ -38,6 +46,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const bottomChrome = usesNativeTabs ? insets.bottom : 0;
   const toast = useToast();
+  const router = useRouter();
   const qc = useQueryClient();
 
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/settings") });
@@ -155,6 +164,7 @@ export default function SettingsScreen() {
     );
   }
   const u = unitLabel(draft.unit);
+  const mode = isFollower(draft.source) ? "follower" : "master";
   const secretPh = (k: SecretKey) => (draft[`${k}_set` as keyof Settings] ? "Saved ••••••" : "Not set");
 
   return (
@@ -189,8 +199,23 @@ export default function SettingsScreen() {
         />
 
         <SectionTitle>Data source</SectionTitle>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          {SOURCES.map((s, i) => (
+        <ChipRow
+          options={[
+            { value: "follower", label: "Follower" },
+            { value: "master", label: "Master" },
+          ]}
+          value={mode}
+          onChange={(m) => m !== mode && set("source", m === "follower" ? "dexcom" : "bluetooth")}
+          testIDPrefix="settings-mode"
+          padded={false}
+        />
+        <Hint>
+          {mode === "follower"
+            ? "Follower: reads your glucose from a cloud service your sensor app already uploads to."
+            : "Master: this phone gets readings itself and uploads them to Nightscout and Tidepool."}
+        </Hint>
+        <Card style={{ paddingVertical: spacing.xs, marginTop: spacing.sm }}>
+          {(mode === "follower" ? FOLLOWER : MASTER).map((s, i) => (
             <Pressable
               key={s.value}
               testID={`settings-source-${s.value}`}
@@ -209,6 +234,39 @@ export default function SettingsScreen() {
             </Pressable>
           ))}
         </Card>
+        {draft.source === "bluetooth" && (
+          <Card style={styles.subCard} testID="bluetooth-sensor-card">
+            <View style={styles.inlineChips}>
+              <Text style={styles.inlineLabel}>Sensor</Text>
+              <ChipRow options={SENSOR_OPTIONS} value={draft.bt_sensor} onChange={(v) => set("bt_sensor", v)} testIDPrefix="bt-sensor" padded={false} />
+            </View>
+            {draft.bt_sensor === "dexcom_g6" && (
+              <Field
+                label="Transmitter ID"
+                value={draft.bt_transmitter_id}
+                onChangeText={(v) => set("bt_transmitter_id", v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
+                placeholder="8XXXXX"
+                autoCapitalize="characters"
+                testID="bt-transmitter-input"
+              />
+            )}
+            <View style={styles.syncRow}>
+              <Text style={styles.syncText} testID="bt-paired-device">
+                {draft.bt_device_name ? `Paired: ${draft.bt_device_name}` : "No sensor paired yet"}
+              </Text>
+              <Button
+                title={draft.bt_device_name ? "Pair again" : "Pair sensor"}
+                kind="secondary"
+                onPress={async () => {
+                  if (dirty) await save.mutateAsync().catch(() => null);
+                  router.push("/sensor");
+                }}
+                testID="bt-pair-button"
+              />
+            </View>
+          </Card>
+        )}
+        {mode === "master" && <Hint>Turn on Nightscout and Tidepool upload below so your readings are shared.</Hint>}
         {draft.source === "dexcom" && (
           <Card style={styles.subCard}>
             <Field label="Username" value={draft.dexcom_username} onChangeText={(v) => set("dexcom_username", v)} placeholder="Dexcom account" testID="dexcom-username-input" />
@@ -265,10 +323,9 @@ export default function SettingsScreen() {
           </Text>
           <Button title="Sync now" kind="secondary" onPress={() => syncNow.mutate()} loading={syncNow.isPending} testID="settings-sync-button" />
         </View>
-        <Hint>
-          Direct Bluetooth from the sensor needs a native iPhone build and isn&apos;t included yet. The cloud options above cover the
-          most sensors.
-        </Hint>
+        {mode === "follower" && (
+          <Hint>Want the phone to read the sensor itself by Bluetooth? Switch to Master.</Hint>
+        )}
 
         <SectionTitle>Alarms</SectionTitle>
         <Card style={{ paddingVertical: spacing.xs }}>

@@ -60,7 +60,12 @@ SECRET_FIELDS = ("ns_secret", "dexcom_password", "libre_password", "tp_password"
 
 class AppSettings(BaseModel):
     unit: Literal["mgdl", "mmol"] = "mgdl"
-    source: Literal["demo", "manual", "nightscout", "dexcom", "libre"] = "demo"
+    source: Literal["demo", "manual", "bluetooth", "nightscout", "dexcom", "libre"] = "demo"
+    # Master mode: direct Bluetooth sensor
+    bt_sensor: Literal["dexcom_g6", "dexcom_g7", "libre2", "libre3"] = "dexcom_g6"
+    bt_transmitter_id: str = ""
+    bt_device_id: str = ""
+    bt_device_name: str = ""
     # thresholds, always mg/dL
     urgent_low: int = 55
     low: int = 70
@@ -111,6 +116,16 @@ class AppSettings(BaseModel):
 class ReadingIn(BaseModel):
     sgv: int = Field(ge=20, le=600)
     ts: Optional[datetime] = None
+
+
+class ReadingBatchItem(BaseModel):
+    ts: datetime
+    sgv: int = Field(ge=20, le=600)
+    direction: str = "NONE"
+
+
+class ReadingBatchIn(BaseModel):
+    readings: list[ReadingBatchItem] = Field(max_length=2000)
 
 
 class TreatmentIn(BaseModel):

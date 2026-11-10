@@ -1,7 +1,8 @@
 const BASE = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api`;
 
 export type Unit = "mgdl" | "mmol";
-export type Source = "demo" | "manual" | "nightscout" | "dexcom" | "libre";
+export type Source = "demo" | "manual" | "bluetooth" | "nightscout" | "dexcom" | "libre";
+export type SensorType = "dexcom_g6" | "dexcom_g7" | "libre2" | "libre3";
 
 export type Reading = { ts: string; sgv: number; direction: string };
 export type Thresholds = { urgent_low: number; low: number; high: number; urgent_high: number };
@@ -55,6 +56,10 @@ export type Contact = { name: string; phone: string };
 export type Settings = Thresholds & {
   unit: Unit;
   source: Source;
+  bt_sensor: SensorType;
+  bt_transmitter_id: string;
+  bt_device_id: string;
+  bt_device_name: string;
   alarm_urgent_low: boolean;
   alarm_low: boolean;
   alarm_high: boolean;

@@ -11,7 +11,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.emergent.iphoneappguide.chhlza",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Send your location to emergency contacts during lows"
+        "NSLocationWhenInUseUsageDescription": "Send your location to emergency contacts during lows",
+        "NSBluetoothAlwaysUsageDescription": "Connect to your glucose sensor for live readings"
       }
     },
     "android": {
@@ -22,7 +23,9 @@
       "package": "com.emergent.iphoneappguide.chhlza",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT"
       ]
     },
     "web": {
@@ -51,6 +54,16 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Send your location to emergency contacts during lows"
+        }
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": [
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "Connect to your glucose sensor for live readings"
         }
       ]
     ],

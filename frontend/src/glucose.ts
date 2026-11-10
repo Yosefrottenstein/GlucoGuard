@@ -59,6 +59,7 @@ export function agoText(d: string): string {
 export const SOURCE_LABELS: Record<string, string> = {
   demo: "Demo sensor",
   manual: "Manual entry",
+  bluetooth: "Bluetooth sensor",
   nightscout: "Nightscout",
   dexcom: "Dexcom Share",
   libre: "LibreLinkUp",

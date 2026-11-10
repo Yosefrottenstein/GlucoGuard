@@ -15,6 +15,10 @@ tap a dot on the chart to see value + time, compatible with as many sensors as p
 
 ## Implemented (2026-11-10)
 - All screens above; 27/27 backend tests pass; frontend flows verified.
+- Data source split into Follower (Dexcom Share, LibreLinkUp, Nightscout) and Master (Bluetooth sensor, manual, demo).
+  Master/Bluetooth: sensor type (Dexcom G6/ONE, G7/ONE+, Libre 2, Libre 3), transmitter ID, pair screen (/sensor) with
+  BLE permission flow + scan (react-native-ble-plx, installed build only), POST /api/readings/batch for phone-collected readings.
+  Sensor glucose decoding drivers NOT yet written (need user's sensor model).
 
 ## Backlog
 - P0: Add Twilio keys to activate emergency texts/calls
