@@ -18,13 +18,19 @@ import { agoText, fromDisplay, toDisplay, unitLabel } from "@/src/glucose";
 import { usesNativeTabs } from "@/src/navigation";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
-type ThrKey = "urgent_low" | "low" | "high" | "urgent_high";
-const THR: { key: ThrKey; label: string }[] = [
+type AlarmKey = "urgent_low" | "low" | "high" | "urgent_high";
+type ThrKey = AlarmKey | "target_low" | "target_high";
+const THR: { key: AlarmKey; label: string }[] = [
   { key: "urgent_low", label: "Urgent low" },
   { key: "low", label: "Low" },
   { key: "high", label: "High" },
   { key: "urgent_high", label: "Urgent high" },
 ];
+const TARGET: { key: ThrKey; label: string }[] = [
+  { key: "target_low", label: "Target low" },
+  { key: "target_high", label: "Target high" },
+];
+const ALL_THR: { key: ThrKey; label: string }[] = [...TARGET, ...THR];
 type SecretKey = "ns_secret" | "dexcom_password" | "libre_password" | "tp_password";
 const EMPTY_SECRETS: Record<SecretKey, string> = { ns_secret: "", dexcom_password: "", libre_password: "", tp_password: "" };
 
@@ -59,7 +65,7 @@ export default function SettingsScreen() {
   });
 
   const [draft, setDraft] = useState<Settings | null>(null);
-  const [thr, setThr] = useState<Record<ThrKey, string>>({ urgent_low: "", low: "", high: "", urgent_high: "" });
+  const [thr, setThr] = useState<Record<ThrKey, string>>({ urgent_low: "", low: "", high: "", urgent_high: "", target_low: "", target_high: "" });
   const [secrets, setSecrets] = useState(EMPTY_SECRETS);
   const [dirty, setDirty] = useState(false);
   const [editing, setEditing] = useState<number | null>(null); // -1 = new contact
@@ -68,7 +74,7 @@ export default function SettingsScreen() {
   useEffect(() => {
     if (settings.data && !dirty) {
       setDraft(settings.data);
-      setThr(Object.fromEntries(THR.map((t) => [t.key, toDisplay(settings.data[t.key], settings.data.unit)])) as Record<ThrKey, string>);
+      setThr(Object.fromEntries(ALL_THR.map((t) => [t.key, toDisplay(settings.data[t.key], settings.data.unit)])) as Record<ThrKey, string>);
     }
   }, [settings.data, dirty]);
 
@@ -81,7 +87,7 @@ export default function SettingsScreen() {
   const changeUnit = (u: Unit) => {
     if (!draft || u === draft.unit) return;
     const next = { ...thr };
-    THR.forEach((t) => {
+    ALL_THR.forEach((t) => {
       const mg = fromDisplay(thr[t.key], draft.unit);
       next[t.key] = mg ? toDisplay(mg, u) : "";
     });
@@ -92,7 +98,7 @@ export default function SettingsScreen() {
   const buildPatch = () => {
     if (!draft) throw new Error("Settings not loaded");
     const patch: Record<string, unknown> = { ...draft };
-    for (const t of THR) {
+    for (const t of ALL_THR) {
       const mg = fromDisplay(thr[t.key], draft.unit);
       if (!mg) throw new Error(`Enter a value for ${t.label.toLowerCase()}.`);
       patch[t.key] = mg;
@@ -325,6 +331,37 @@ export default function SettingsScreen() {
         {mode === "follower" && (
           <Hint>Want the phone to read the sensor itself by Bluetooth? Switch to Master.</Hint>
         )}
+
+        <SectionTitle>Target range</SectionTitle>
+        <Card style={{ paddingVertical: spacing.xs }}>
+          {TARGET.map((t, i) => (
+            <View key={t.key} style={[styles.alarmRow, i === 0 && styles.bottomBorder]}>
+              <View style={[styles.swatch, { backgroundColor: t.key === "target_low" ? colors.low : colors.high }]} />
+              <Text style={[styles.radioTitle, { flex: 1 }]}>{t.label}</Text>
+              <TextInput
+                testID={`target-${t.key}`}
+                value={thr[t.key]}
+                onChangeText={(v) => (setThr({ ...thr, [t.key]: v }), setDirty(true))}
+                keyboardType="decimal-pad"
+                style={styles.thrInput}
+              />
+              <Text style={styles.unitText}>{u}</Text>
+            </View>
+          ))}
+        </Card>
+        <View style={styles.legendRow}>
+          {[
+            { c: colors.low, l: "Below range" },
+            { c: colors.inRange, l: "In range" },
+            { c: colors.high, l: "Above range" },
+          ].map((x) => (
+            <View key={x.l} style={styles.legendItem}>
+              <View style={[styles.swatch, { backgroundColor: x.c }]} />
+              <Text style={styles.radioSub}>{x.l}</Text>
+            </View>
+          ))}
+        </View>
+        <Hint>Colours the graph dots and sets time in range. Alarm levels below are separate.</Hint>
 
         <SectionTitle>Alarms</SectionTitle>
         <Card style={{ paddingVertical: spacing.xs }}>
@@ -589,6 +626,9 @@ const useStyles = makeStyles((c) => ({
   syncRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.md },
   syncText: { flex: 1, fontFamily: fonts.text, fontSize: 13, color: c.onSurfaceTertiary },
   alarmRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 52 },
+  swatch: { width: 12, height: 12, borderRadius: 6 },
+  legendRow: { flexDirection: "row", gap: spacing.lg, marginTop: spacing.sm, marginHorizontal: spacing.xs },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
   thrInput: {
     width: 72,
     height: 40,

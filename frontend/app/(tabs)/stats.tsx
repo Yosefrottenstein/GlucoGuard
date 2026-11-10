@@ -41,9 +41,9 @@ export default function StatsScreen() {
   const segments = d?.tir
     ? [
         { key: "very_high", label: `Very high (>${toDisplay(250, unit)})`, value: d.tir.very_high, color: colors.low },
-        { key: "high", label: `High (${toDisplay((t?.high ?? 180) + 1, unit)}–${toDisplay(250, unit)})`, value: d.tir.high, color: colors.high },
-        { key: "in_range", label: `In range (${toDisplay(t?.low ?? 70, unit)}–${toDisplay(t?.high ?? 180, unit)})`, value: d.tir.in_range, color: colors.inRange },
-        { key: "low", label: `Low (${toDisplay(54, unit)}–${toDisplay((t?.low ?? 70) - 1, unit)})`, value: d.tir.low, color: colors.warning },
+        { key: "high", label: `High (${toDisplay((t?.target_high ?? 180) + 1, unit)}–${toDisplay(250, unit)})`, value: d.tir.high, color: colors.high },
+        { key: "in_range", label: `In range (${toDisplay(t?.target_low ?? 70, unit)}–${toDisplay(t?.target_high ?? 180, unit)})`, value: d.tir.in_range, color: colors.inRange },
+        { key: "low", label: `Low (${toDisplay(54, unit)}–${toDisplay((t?.target_low ?? 70) - 1, unit)})`, value: d.tir.low, color: colors.warning },
         { key: "very_low", label: `Very low (<${toDisplay(54, unit)})`, value: d.tir.very_low, color: colors.low },
       ]
     : [];

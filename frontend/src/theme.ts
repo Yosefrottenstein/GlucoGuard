@@ -37,9 +37,9 @@ const light = {
   borderStrong: "#C7C7CC",
   divider: "#E5E5EA",
 
-  // glucose ranges
-  inRange: "#34C759",
-  high: "#FF9500",
+  // glucose ranges (graph dots): red low, sky blue in range, yellow high
+  inRange: "#29B6F6",
+  high: "#FFC400",
   low: "#FF3B30",
   // treatment markers
   insulin: "#0A84FF",

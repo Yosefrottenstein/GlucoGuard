@@ -35,8 +35,8 @@ const ARROWS: Record<string, string> = {
 export const arrow = (direction: string) => ARROWS[direction] ?? "";
 
 export function levelColor(mg: number, t: Thresholds, colors: ThemeColors): string {
-  if (mg < t.low) return colors.low;
-  if (mg > t.high) return colors.high;
+  if (mg < t.target_low) return colors.low;
+  if (mg > t.target_high) return colors.high;
   return colors.inRange;
 }
 

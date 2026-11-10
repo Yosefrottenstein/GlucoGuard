@@ -5,7 +5,7 @@ export type Source = "demo" | "manual" | "bluetooth" | "nightscout" | "dexcom" |
 export type SensorType = "dexcom_g6" | "dexcom_g7" | "libre2" | "libre3";
 
 export type Reading = { ts: string; sgv: number; direction: string };
-export type Thresholds = { urgent_low: number; low: number; high: number; urgent_high: number };
+export type Thresholds = { urgent_low: number; low: number; high: number; urgent_high: number; target_low: number; target_high: number };
 
 export type Alarm = {
   type: string;

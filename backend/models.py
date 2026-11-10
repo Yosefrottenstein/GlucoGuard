@@ -79,7 +79,10 @@ class AppSettings(BaseModel):
     bt_transmitter_id: str = ""
     bt_device_id: str = ""
     bt_device_name: str = ""
-    # thresholds, always mg/dL
+    # target range for graph colours and time-in-range, always mg/dL
+    target_low: int = 70
+    target_high: int = 180
+    # alarm thresholds, always mg/dL
     urgent_low: int = 55
     low: int = 70
     high: int = 180

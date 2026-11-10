@@ -80,7 +80,7 @@ export function GlucoseChart({ readings, treatments = [], start, end, thresholds
   const span = end - start;
   const xTicks = [0, 1, 2, 3, 4].map((i) => start + (span * i) / 4);
   const xLabel = (t: number) => (span <= 36 * 3600000 ? format(t, "HH:mm") : format(t, "MMM d"));
-  const yTicks = [thresholds.low, thresholds.high, Math.round(yMax / 50) * 50 - 50].filter(
+  const yTicks = [thresholds.target_low, thresholds.target_high, Math.round(yMax / 50) * 50 - 50].filter(
     (v, i, a) => v > Y_MIN && v < yMax && a.indexOf(v) === i,
   );
   const dotR = span <= 4 * 3600000 ? 3.6 : span <= 13 * 3600000 ? 3 : 2.4;
@@ -100,17 +100,17 @@ export function GlucoseChart({ readings, treatments = [], start, end, thresholds
         <Svg width={width} height={height} pointerEvents="none">
           <Rect
             x={PAD_L}
-            y={y(thresholds.high)}
+            y={y(thresholds.target_high)}
             width={plotW}
-            height={y(thresholds.low) - y(thresholds.high)}
+            height={y(thresholds.target_low) - y(thresholds.target_high)}
             fill={colors.inRange}
             opacity={0.1}
           />
           {[thresholds.urgent_low, thresholds.urgent_high].map((v) => (
             <Line key={v} x1={PAD_L} x2={PAD_L + plotW} y1={y(v)} y2={y(v)} stroke={colors.low} strokeWidth={0.6} strokeDasharray="2,4" opacity={0.6} />
           ))}
-          {[thresholds.low, thresholds.high].map((v) => (
-            <Line key={v} x1={PAD_L} x2={PAD_L + plotW} y1={y(v)} y2={y(v)} stroke={v === thresholds.low ? colors.low : colors.high} strokeWidth={1} strokeDasharray="4,4" />
+          {[thresholds.target_low, thresholds.target_high].map((v) => (
+            <Line key={v} x1={PAD_L} x2={PAD_L + plotW} y1={y(v)} y2={y(v)} stroke={v === thresholds.target_low ? colors.low : colors.high} strokeWidth={1} strokeDasharray="4,4" />
           ))}
           {yTicks.map((v) => (
             <SvgText key={v} x={PAD_L - 6} y={y(v) + 4} fontSize={10} fill={colors.muted} textAnchor="end">

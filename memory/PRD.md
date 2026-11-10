@@ -33,3 +33,4 @@ tap a dot on the chart to see value + time, compatible with as many sensors as p
   (shared iOS connection, like LoopKit G7SensorKit / xDrip4iOS). Parses 0x4E glucose message (verified against Loop sample bytes),
   posts to /api/readings/batch with offline queue. SensorCollector mounted in root layout. Needs TestFlight build to test.
 - Backlog: G7 backfill (missed readings), Libre 2 direct (NFC unlock + decryption), Dexcom Share upload.
+- Separate target range (target_low/high, unit-aware) for graph dot colours + TIR; colours red low / sky blue in range / yellow high (2026-11-10)

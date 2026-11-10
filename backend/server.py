@@ -359,6 +359,8 @@ async def update_settings(patch: dict):
         raise HTTPException(422, f"Invalid settings: {exc}")
     if not (new.urgent_low < new.low < new.high < new.urgent_high):
         raise HTTPException(422, "Thresholds must go: urgent low < low < high < urgent high.")
+    if not (40 <= new.target_low < new.target_high <= 400):
+        raise HTTPException(422, "Target range: low must be below high.")
     await db.settings.update_one({"_id": "main"}, {"$set": new.model_dump()}, upsert=True)
     if new.source != current.source:
         reset_sessions()
@@ -396,7 +398,8 @@ async def status():
     return {"reading": reading, "delta": delta, "source": s.source, "unit": s.unit,
             "last_sync": sync.get("last_sync"), "last_error": sync.get("last_error"),
             "upload_errors": sync.get("upload_errors") or {}, "alarm": active,
-            "thresholds": {"urgent_low": s.urgent_low, "low": s.low, "high": s.high, "urgent_high": s.urgent_high}}
+            "thresholds": {"urgent_low": s.urgent_low, "low": s.low, "high": s.high, "urgent_high": s.urgent_high,
+                           "target_low": s.target_low, "target_high": s.target_high}}
 
 
 @api.get("/readings")
@@ -497,9 +500,9 @@ async def compute_stats(start: datetime, end: datetime, s: AppSettings) -> dict:
         "capture": min(100.0, round(100 * n / expected, 1)),
         "tir": {
             "very_low": pct(sum(v < 54 for v in vals)),
-            "low": pct(sum(54 <= v < s.low for v in vals)),
-            "in_range": pct(sum(s.low <= v <= s.high for v in vals)),
-            "high": pct(sum(s.high < v <= 250 for v in vals)),
+            "low": pct(sum(54 <= v < s.target_low for v in vals)),
+            "in_range": pct(sum(s.target_low <= v <= s.target_high for v in vals)),
+            "high": pct(sum(s.target_high < v <= 250 for v in vals)),
             "very_high": pct(sum(v > 250 for v in vals)),
         },
     }

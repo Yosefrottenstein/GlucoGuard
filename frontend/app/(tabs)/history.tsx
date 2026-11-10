@@ -57,7 +57,7 @@ export default function History() {
   });
 
   const unit = status.data?.unit ?? "mgdl";
-  const thresholds = status.data?.thresholds ?? { urgent_low: 55, low: 70, high: 180, urgent_high: 250 };
+  const thresholds = status.data?.thresholds ?? { urgent_low: 55, low: 70, high: 180, urgent_high: 250, target_low: 70, target_high: 180 };
 
   const rows: Row[] = useMemo(() => {
     const t: Row[] = (treatments.data ?? []).map((x) => ({ key: `t-${x.id}`, ts: x.ts, treatment: x }));
