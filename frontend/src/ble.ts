@@ -21,8 +21,16 @@ export const SENSORS: Record<SensorType, { label: string; hint: string; match: (
     hint: "Keep the official Dexcom G7 app installed and running. It starts the sensor and handles its security; xDrip listens to the same sensor.",
     match: (n) => n.startsWith("DXCM"),
   },
-  libre2: { label: "Libre 2 / 2 Plus", hint: "Keep the sensor close to the phone while searching.", match: (n) => n.startsWith("ABBOTT") },
-  libre3: { label: "Libre 3 / 3 Plus", hint: "Libre 3 is heavily encrypted; pairing is experimental.", match: (n) => n.length > 0 },
+  libre2: {
+    label: "Libre 2 / 2 Plus",
+    hint: "Scan the sensor once with your phone's NFC to switch on Bluetooth, then readings arrive every minute. Works with Libre 2 and European Libre 2 Plus. The Libre app can't stream at the same time.",
+    match: (n) => n.startsWith("ABBOTT"),
+  },
+  libre3: {
+    label: "Libre 3 / 3 Plus",
+    hint: "Libre 3 uses strong encryption that no open-source app (including xDrip+) can read directly. Use LibreLinkUp in Follower mode instead.",
+    match: () => false,
+  },
 };
 
 let manager: any = null;

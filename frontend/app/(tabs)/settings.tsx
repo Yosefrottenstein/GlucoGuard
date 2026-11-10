@@ -7,14 +7,19 @@ import { ActivityIndicator, Linking, Modal, Pressable, Text, TextInput, View } f
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, ChannelSchedule, GlucoseAlarm, Reminder, SensorType, Settings, Source, Status, Unit } from "@/src/api";
+import { api, GlucoseAlarm, Reminder, SensorType, Settings, Source, Status, Unit } from "@/src/api";
 import { Sheet } from "@/src/components/Sheet";
+import { useAuth } from "@/src/auth";
 import { SoundPicker } from "@/src/components/SoundPicker";
-import { SOUNDS, stopSound } from "@/src/sounds";
+import { stopSound } from "@/src/sounds";
 import { SENSORS } from "@/src/ble";
 import { ChipRow, MultiChipRow } from "@/src/components/ChipRow";
+import { AlarmsSection, soundText, THR, TARGET, ThrKey, TimingFields } from "@/src/components/settings/AlarmsSection";
+import { EmergencySection } from "@/src/components/settings/EmergencySection";
+import { useSettingsStyles } from "@/src/components/settings/styles";
+import { DexcomLoginFields, SecretKey, UploadsSection } from "@/src/components/settings/UploadsSection";
 import { ContactSheet } from "@/src/components/ContactSheet";
-import { asTime, describeSchedule, ScheduleEditor, validTime } from "@/src/components/ScheduleEditor";
+import { asTime, validTime } from "@/src/components/ScheduleEditor";
 import { useToast } from "@/src/components/Toast";
 import { Button, Card, Field, Hint, SectionTitle, ToggleRow } from "@/src/components/ui";
 import { agoText, fromDisplay, toDisplay, unitLabel } from "@/src/glucose";
@@ -27,21 +32,11 @@ import {
   sensorEndsText,
 } from "@/src/sensorAlerts";
 import { format, isValid, parse } from "date-fns";
-import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
+import { spacing, useTheme } from "@/src/theme";
 
-type AlarmKey = "urgent_low" | "low" | "high" | "urgent_high";
-type ThrKey = AlarmKey | "target_low" | "target_high";
-const THR: { key: AlarmKey; label: string }[] = [
-  { key: "urgent_low", label: "Urgent low" },
-  { key: "low", label: "Low" },
-  { key: "high", label: "High" },
-  { key: "urgent_high", label: "Urgent high" },
-];
-const TARGET: { key: ThrKey; label: string }[] = [
-  { key: "target_low", label: "Target low" },
-  { key: "target_high", label: "Target high" },
-];
+const useStyles = useSettingsStyles;
 const ALL_THR: { key: ThrKey; label: string }[] = [...TARGET, ...THR];
+
 const SOUND_TITLES: Record<string, string> = {
   sensor: "Sensor reminder",
   extreme_low: "Extreme low",
@@ -51,9 +46,7 @@ const SOUND_TITLES: Record<string, string> = {
   urgent_high: "Urgent high",
   missed: "Missed readings",
 };
-const soundText = (a: { style: string; sound: string }) =>
-  a.style === "vibrate" ? "Vibrate only" : `${SOUNDS.find((s) => s.id === a.sound)?.label ?? a.sound}${a.style === "both" ? " + vibrate" : ""}`;
-type SecretKey = "ns_secret" | "dexcom_password" | "libre_password" | "tp_password";
+
 const EMPTY_SECRETS: Record<SecretKey, string> = { ns_secret: "", dexcom_password: "", libre_password: "", tp_password: "" };
 
 type SourceOpt = { value: Source; title: string; sub: string };
@@ -76,6 +69,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const bottomChrome = usesNativeTabs ? insets.bottom : 0;
   const toast = useToast();
+  const { username, signOut } = useAuth();
   const router = useRouter();
   const qc = useQueryClient();
 
@@ -135,10 +129,6 @@ export default function SettingsScreen() {
       patch[k] = secrets[k];
       delete patch[`${k}_set`];
     });
-    for (const s of [draft.em_sms_schedule, draft.em_call_schedule]) {
-      if (s.mode === "hours" && !(validTime(s.start) && validTime(s.end))) throw new Error("Enter hours as HH:MM, e.g. 22:00");
-    }
-    if (draft.em_sms_repeat_minutes < 1 || draft.em_call_repeat_minutes < 1) throw new Error("Resend time must be at least 1 minute.");
     patch.tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
     if (startText.trim()) {
       const d = parse(startText.trim(), "yyyy-MM-dd HH:mm", new Date());
@@ -176,6 +166,7 @@ export default function SettingsScreen() {
   const syncNow = action("/sync", (d) => (d.error ? `Sync problem: ${d.error}` : `Synced. ${d.added} new readings`));
   const nsUpload = action("/nightscout/upload", (d) => `Uploaded ${d.uploaded} items to Nightscout`);
   const tpUpload = action("/tidepool/upload", (d) => `Uploaded ${d.uploaded} items to Tidepool`);
+  const dxUpload = action("/dexcom/upload", (d) => `Uploaded ${d.uploaded} readings to Dexcom Share`);
   const emTest = action("/emergency/test", (d) => d.results.join(" · ") || "Test sent");
   /* eslint-enable react-hooks/rules-of-hooks */
 
@@ -238,9 +229,6 @@ export default function SettingsScreen() {
     toast("Reminder ready. Tap Save to keep it.", "info");
   };
 
-  const channelText = (own: ChannelSchedule, enabledGlobally: boolean, def: ChannelSchedule) =>
-    !enabledGlobally || !own.enabled ? "off" : describeSchedule(own.mode === "default" ? def : own);
-
   if (!draft) {
     return (
       <View style={[styles.root, styles.center]}>
@@ -250,6 +238,7 @@ export default function SettingsScreen() {
   }
   const u = unitLabel(draft.unit);
   const mode = isFollower(draft.source) ? "follower" : "master";
+  const setSecret = (k: SecretKey, v: string) => (setSecrets({ ...secrets, [k]: v }), setDirty(true));
   const secretPh = (k: SecretKey) => (draft[`${k}_set` as keyof Settings] ? "Saved ••••••" : "Not set");
 
   return (
@@ -271,6 +260,17 @@ export default function SettingsScreen() {
         contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: bottomChrome + 32 }}
         keyboardShouldPersistTaps="handled"
       >
+        <SectionTitle>Account</SectionTitle>
+        <Card style={{ paddingVertical: spacing.xs }}>
+          <View style={styles.syncRow}>
+            <Ionicons name="person-circle" size={28} color={colors.muted} />
+            <Text style={styles.syncText} testID="account-username">
+              Signed in as {username || "you"}
+            </Text>
+            <Button title="Sign out" kind="secondary" onPress={signOut} testID="account-signout-button" />
+          </View>
+        </Card>
+
         <SectionTitle>Glucose unit</SectionTitle>
         <ChipRow
           options={[
@@ -297,7 +297,7 @@ export default function SettingsScreen() {
         <Hint>
           {mode === "follower"
             ? "Follower: reads your glucose from a cloud service your sensor app already uploads to."
-            : "Master: this phone gets readings itself and uploads them to Nightscout and Tidepool."}
+            : "Master: this phone gets readings itself and uploads them to Nightscout, Tidepool and Dexcom Share."}
         </Hint>
         <Card style={{ paddingVertical: spacing.xs, marginTop: spacing.sm }}>
           {(mode === "follower" ? FOLLOWER : MASTER).map((s, i) => (
@@ -351,32 +351,16 @@ export default function SettingsScreen() {
             </View>
           </Card>
         )}
-        {mode === "master" && <Hint>Turn on Nightscout and Tidepool upload below so your readings are shared.</Hint>}
+        {mode === "master" && <Hint>Turn on Nightscout, Tidepool or Dexcom Share upload below so your readings are shared.</Hint>}
         {draft.source === "dexcom" && (
           <Card style={styles.subCard}>
-            <Field label="Username" value={draft.dexcom_username} onChangeText={(v) => set("dexcom_username", v)} placeholder="Dexcom account" testID="dexcom-username-input" />
-            <Field
-              label="Password"
-              value={secrets.dexcom_password}
-              onChangeText={(v) => (setSecrets({ ...secrets, dexcom_password: v }), setDirty(true))}
-              placeholder={secretPh("dexcom_password")}
-              secureTextEntry
-              testID="dexcom-password-input"
+            <DexcomLoginFields
+              draft={draft}
+              set={set}
+              secret={secrets.dexcom_password}
+              onSecret={(v) => setSecret("dexcom_password", v)}
+              secretPh={secretPh("dexcom_password")}
             />
-            <View style={styles.inlineChips}>
-              <Text style={styles.inlineLabel}>Region</Text>
-              <ChipRow
-                options={[
-                  { value: "us", label: "USA" },
-                  { value: "ous", label: "Outside USA" },
-                  { value: "jp", label: "Japan" },
-                ]}
-                value={draft.dexcom_region}
-                onChange={(v) => set("dexcom_region", v)}
-                testIDPrefix="dexcom-region"
-                padded={false}
-              />
-            </View>
           </Card>
         )}
         {draft.source === "libre" && (
@@ -484,297 +468,39 @@ export default function SettingsScreen() {
           on iPhone, and vibrate when it&apos;s open.
         </Hint>
 
-        <SectionTitle>Target range</SectionTitle>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          {TARGET.map((t, i) => (
-            <View key={t.key} style={[styles.alarmRow, i === 0 && styles.bottomBorder]}>
-              <View style={[styles.swatch, { backgroundColor: t.key === "target_low" ? colors.low : colors.high }]} />
-              <Text style={[styles.radioTitle, { flex: 1 }]}>{t.label}</Text>
-              <TextInput
-                testID={`target-${t.key}`}
-                value={thr[t.key]}
-                onChangeText={(v) => (setThr({ ...thr, [t.key]: v }), setDirty(true))}
-                keyboardType="decimal-pad"
-                style={styles.thrInput}
-              />
-              <Text style={styles.unitText}>{u}</Text>
-            </View>
-          ))}
-        </Card>
-        <View style={styles.legendRow}>
-          {[
-            { c: colors.low, l: "Below range" },
-            { c: colors.inRange, l: "In range" },
-            { c: colors.high, l: "Above range" },
-          ].map((x) => (
-            <View key={x.l} style={styles.legendItem}>
-              <View style={[styles.swatch, { backgroundColor: x.c }]} />
-              <Text style={styles.radioSub}>{x.l}</Text>
-            </View>
-          ))}
-        </View>
-        <Hint>Colours the graph dots and sets time in range. Alarm levels below are separate.</Hint>
-
-        <SectionTitle>Alarms</SectionTitle>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          <View style={[styles.alarmRow, styles.bottomBorder]}>
-            <Text style={[styles.radioTitle, { flex: 1 }]}>Extreme low</Text>
-            <Text style={[styles.thrInput, styles.fixedThr]} testID="alarm-threshold-extreme_low">
-              {toDisplay(50, draft.unit)}
-            </Text>
-            <Text style={styles.unitText}>{u}</Text>
-            <SoundButton onPress={() => setSoundEdit("extreme_low")} testID="alarm-sound-extreme_low" />
-            <SwitchLike value={draft.alarm_extreme_low} onChange={(v) => set("alarm_extreme_low", v)} testID="alarm-toggle-extreme_low" />
-          </View>
-          {THR.map((t) => (
-            <View key={t.key} style={[styles.alarmRow, styles.bottomBorder]}>
-              <Text style={[styles.radioTitle, { flex: 1 }]}>{t.label}</Text>
-              <TextInput
-                testID={`alarm-threshold-${t.key}`}
-                value={thr[t.key]}
-                onChangeText={(v) => (setThr({ ...thr, [t.key]: v }), setDirty(true))}
-                keyboardType="decimal-pad"
-                style={styles.thrInput}
-              />
-              <Text style={styles.unitText}>{u}</Text>
-              <SoundButton onPress={() => setSoundEdit(t.key)} testID={`alarm-sound-${t.key}`} />
-              <SwitchLike
-                value={draft[`alarm_${t.key}` as keyof Settings] as boolean}
-                onChange={(v) => set(`alarm_${t.key}` as keyof Settings, v as never)}
-                testID={`alarm-toggle-${t.key}`}
-              />
-            </View>
-          ))}
-          <ToggleRow label="Missed readings" sub="Alert when no new reading arrives" value={draft.alarm_missed} onChange={(v) => set("alarm_missed", v)} testID="alarm-toggle-missed" />
-          <Pressable testID="alarm-sound-missed" onPress={() => setSoundEdit("missed")} style={[styles.soundRow, styles.bottomBorder]}>
-            <Ionicons name="musical-notes" size={18} color={colors.brandPrimary} />
-            <Text style={[styles.radioTitle, { flex: 1 }]}>Missed readings sound</Text>
-            <Text style={styles.radioSub}>{soundText(draft.alarm_sounds.missed)}</Text>
-          </Pressable>
-          <Field label="Missed after" last value={String(draft.missed_minutes)} onChangeText={(v) => setNum("missed_minutes", v)} keyboardType="number-pad" suffix="min" testID="alarm-missed-minutes-input" />
-        </Card>
-        <Hint>
-          Tap the note icon to set each alarm&apos;s sound, vibration, how often it repeats and how long Snooze lasts. Extreme low (below{" "}
-          {toDisplay(50, draft.unit)} {u}) always plays sound only. Alarms ring while the app is open or woken by the G7; emergency messages
-          are sent by the server even when the phone is locked.
-        </Hint>
-
-        <Text style={styles.subTitle}>Custom glucose alarms</Text>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          {draft.glucose_alarms.length === 0 && (
-            <Text style={[styles.radioSub, { paddingVertical: spacing.md }]}>Add your own alarm for any number, above or below.</Text>
-          )}
-          {draft.glucose_alarms.map((g, i) => (
-            <Pressable
-              key={g.id}
-              testID={`glucose-alarm-row-${i}`}
-              onPress={() => setGaEdit({ index: i, value: g, text: toDisplay(g.value, draft.unit) })}
-              style={[styles.contactRow, i < draft.glucose_alarms.length - 1 && styles.bottomBorder]}
-            >
-              <Ionicons name={g.direction === "below" ? "arrow-down-circle" : "arrow-up-circle"} size={24} color={g.enabled ? (g.direction === "below" ? colors.low : colors.high) : colors.muted} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.radioTitle}>{g.title}</Text>
-                <Text style={styles.radioSub}>
-                  {g.direction === "below" ? "Below" : "Above"} {toDisplay(g.value, draft.unit)} {u} · {soundText(g)} · every {g.repeat_minutes} min · snooze{" "}
-                  {g.snooze_minutes} min{g.enabled ? "" : " · off"}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-            </Pressable>
-          ))}
-        </Card>
-        <Button
-          title="Add glucose alarm"
-          kind="secondary"
-          onPress={() =>
-            setGaEdit({
-              index: -1,
-              text: "",
-              value: { id: `${Date.now()}`, title: "", direction: "below", value: 80, enabled: true, style: "both", sound: "classic", repeat_minutes: 5, snooze_minutes: 30 },
-            })
-          }
-          testID="glucose-alarm-add-button"
-          style={{ marginTop: spacing.sm }}
+        <AlarmsSection
+          draft={draft}
+          set={set}
+          setNum={setNum}
+          thr={thr}
+          setThr={(k, v) => (setThr({ ...thr, [k]: v }), setDirty(true))}
+          onSound={setSoundEdit}
+          onEditGlucoseAlarm={(index, value) => setGaEdit({ index, value, text: index >= 0 ? toDisplay(value.value, draft.unit) : "" })}
+          onEditReminder={(index, value) => setReminderEdit({ index, value })}
         />
 
-        <SectionTitle>Reminders</SectionTitle>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          {draft.reminders.length === 0 && (
-            <Text style={[styles.radioSub, { paddingVertical: spacing.md }]}>No reminders yet. Add one for site change, insulin, meals…</Text>
-          )}
-          {draft.reminders.map((r, i) => (
-            <Pressable
-              key={r.id}
-              testID={`reminder-row-${i}`}
-              onPress={() => setReminderEdit({ index: i, value: r })}
-              style={[styles.contactRow, i < draft.reminders.length - 1 && styles.bottomBorder]}
-            >
-              <Ionicons name="alarm" size={24} color={r.enabled ? colors.brandPrimary : colors.muted} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.radioTitle}>{r.title}</Text>
-                <Text style={styles.radioSub}>
-                  {r.repeat === "daily" ? "Every day" : r.date} at {r.time} · {soundText(r)}
-                  {r.enabled ? "" : " · off"}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-            </Pressable>
-          ))}
-        </Card>
-        <Button
-          title="Add reminder"
-          kind="secondary"
-          onPress={() =>
-            setReminderEdit({
-              index: -1,
-              value: { id: `${Date.now()}`, title: "", time: "08:00", repeat: "daily", date: null, enabled: true, style: "both", sound: "chime" },
-            })
-          }
-          testID="reminder-add-button"
-          style={{ marginTop: spacing.sm }}
+        <EmergencySection
+          draft={draft}
+          set={set}
+          setNum={setNum}
+          ensureLocation={ensureLocation}
+          onEditContact={setEditing}
+          emTest={emTest}
+          log={log.data ?? []}
         />
 
-        <SectionTitle>Emergency messages</SectionTitle>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          <ToggleRow
-            label="Emergency messages"
-            sub="Alert contacts when an alarm isn't snoozed in time"
-            value={draft.em_enabled}
-            onChange={(v) => {
-              set("em_enabled", v);
-              if (v && draft.em_location) ensureLocation();
-            }}
-            testID="emergency-enabled-toggle"
-          />
-          <Field label="Your name" value={draft.em_name} onChangeText={(v) => set("em_name", v)} placeholder="Used in the message" autoCapitalize="words" testID="emergency-name-input" />
-          <ToggleRow
-            label="Include my location"
-            sub="Adds a map link to the text"
-            value={draft.em_location}
-            onChange={(v) => {
-              set("em_location", v);
-              if (v) ensureLocation();
-            }}
-            testID="emergency-location-toggle"
-          />
-          <View style={[styles.inlineChips, styles.bottomBorder]}>
-            <Text style={styles.inlineLabel}>Send for these alarms</Text>
-            <MultiChipRow
-              options={[
-                { value: "urgent_low", label: "Urgent low" },
-                { value: "low", label: "Low" },
-                { value: "high", label: "High" },
-                { value: "urgent_high", label: "Urgent high" },
-              ]}
-              values={draft.em_triggers}
-              onChange={(v) => set("em_triggers", v)}
-              testIDPrefix="emergency-trigger"
-            />
-          </View>
-          <Field label="Wait before" last value={String(draft.em_delay_minutes)} onChangeText={(v) => setNum("em_delay_minutes", v)} keyboardType="number-pad" suffix="min" testID="emergency-delay-input" />
-        </Card>
-
-        <Text style={styles.subTitle}>Text messages (SMS)</Text>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          <ToggleRow label="Send text messages" value={draft.em_sms} onChange={(v) => set("em_sms", v)} testID="emergency-sms-toggle" last={!draft.em_sms} />
-          {draft.em_sms && (
-            <>
-              <Field label="Resend every" value={String(draft.em_sms_repeat_minutes)} onChangeText={(v) => setNum("em_sms_repeat_minutes", v)} keyboardType="number-pad" suffix="min" testID="emergency-sms-repeat-input" />
-              <View style={styles.inlineChips}>
-                <Text style={styles.inlineLabel}>Default hours for texts</Text>
-                <ScheduleEditor value={draft.em_sms_schedule} onChange={(v) => set("em_sms_schedule", v)} testIDPrefix="emergency-sms-schedule" />
-              </View>
-            </>
-          )}
-        </Card>
-
-        <Text style={styles.subTitle}>Voice calls</Text>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          <ToggleRow label="Make phone calls" sub="A voice reads the alert aloud" value={draft.em_call} onChange={(v) => set("em_call", v)} testID="emergency-call-toggle" last={!draft.em_call} />
-          {draft.em_call && (
-            <>
-              <Field label="Call again every" value={String(draft.em_call_repeat_minutes)} onChangeText={(v) => setNum("em_call_repeat_minutes", v)} keyboardType="number-pad" suffix="min" testID="emergency-call-repeat-input" />
-              <View style={styles.inlineChips}>
-                <Text style={styles.inlineLabel}>Default hours for calls</Text>
-                <ScheduleEditor value={draft.em_call_schedule} onChange={(v) => set("em_call_schedule", v)} testIDPrefix="emergency-call-schedule" />
-              </View>
-            </>
-          )}
-        </Card>
-        <Hint>
-          While glucose stays at the same alarm level, texts and calls repeat at these intervals until you snooze. If the level changes (for
-          example low to urgent low), it starts over.
-        </Hint>
-
-        <Text style={styles.subTitle}>Contacts</Text>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          {draft.em_contacts.length === 0 && <Text style={[styles.radioSub, { paddingVertical: spacing.md }]}>No contacts yet.</Text>}
-          {draft.em_contacts.map((c, i) => (
-            <Pressable
-              key={`${c.phone}-${i}`}
-              onPress={() => setEditing(i)}
-              style={[styles.contactRow, i < draft.em_contacts.length - 1 && styles.bottomBorder]}
-              testID={`emergency-contact-${i}`}
-            >
-              <Ionicons name="person-circle" size={28} color={colors.muted} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.radioTitle}>{c.name}</Text>
-                <Text style={styles.radioSub}>
-                  {c.phone} · Text {channelText(c.sms, draft.em_sms, draft.em_sms_schedule)} · Call{" "}
-                  {channelText(c.call, draft.em_call, draft.em_call_schedule)}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-            </Pressable>
-          ))}
-        </Card>
-        <Button title="Add contact" kind="secondary" onPress={() => setEditing(-1)} testID="emergency-add-contact-button" style={{ marginTop: spacing.sm }} />
-        <Button
-          title="Send test message"
-          kind="danger"
-          onPress={() => emTest.mutate()}
-          loading={emTest.isPending}
-          testID="emergency-test-button"
-          style={{ marginTop: spacing.sm }}
+        <UploadsSection
+          draft={draft}
+          set={set}
+          mode={mode}
+          secrets={secrets}
+          setSecret={setSecret}
+          secretPh={secretPh}
+          status={status.data}
+          nsUpload={nsUpload}
+          tpUpload={tpUpload}
+          dxUpload={dxUpload}
         />
-        <Hint>Messages are not sent while the demo sensor is selected. Real texts and calls go through Twilio, which charges per message.</Hint>
-        {(log.data ?? []).slice(0, 3).map((l) => (
-          <Text key={l.id} style={styles.logLine} testID="emergency-log-line">
-            {l.test ? "Test" : "Alert"} · {agoText(l.ts)} · {l.results.join(", ")}
-          </Text>
-        ))}
-
-        <SectionTitle>Nightscout</SectionTitle>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          <Field label="Site URL" value={draft.ns_url} onChangeText={(v) => set("ns_url", v.trim())} placeholder="https://mysite.herokuapp.com" keyboardType="url" testID="nightscout-url-input" />
-          <Field
-            label="API secret"
-            value={secrets.ns_secret}
-            onChangeText={(v) => (setSecrets({ ...secrets, ns_secret: v }), setDirty(true))}
-            placeholder={secretPh("ns_secret")}
-            secureTextEntry
-            testID="nightscout-secret-input"
-          />
-          <ToggleRow label="Upload to Nightscout" sub="Readings and entries, every minute" value={draft.ns_upload} onChange={(v) => set("ns_upload", v)} testID="nightscout-upload-toggle" last />
-        </Card>
-        {status.data?.upload_errors?.nightscout ? <Text style={styles.err}>{status.data.upload_errors.nightscout}</Text> : null}
-        <Button title="Upload now" kind="secondary" onPress={() => nsUpload.mutate()} loading={nsUpload.isPending} testID="nightscout-upload-button" style={{ marginTop: spacing.sm }} />
-
-        <SectionTitle>Tidepool</SectionTitle>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          <Field label="Email" value={draft.tp_email} onChangeText={(v) => set("tp_email", v.trim())} placeholder="Tidepool email" keyboardType="email-address" testID="tidepool-email-input" />
-          <Field
-            label="Password"
-            value={secrets.tp_password}
-            onChangeText={(v) => (setSecrets({ ...secrets, tp_password: v }), setDirty(true))}
-            placeholder={secretPh("tp_password")}
-            secureTextEntry
-            testID="tidepool-password-input"
-          />
-          <ToggleRow label="Upload to Tidepool" sub="Every 15 minutes" value={draft.tp_upload} onChange={(v) => set("tp_upload", v)} testID="tidepool-upload-toggle" last />
-        </Card>
-        {status.data?.upload_errors?.tidepool ? <Text style={styles.err}>{status.data.upload_errors.tidepool}</Text> : null}
-        <Button title="Upload now" kind="secondary" onPress={() => tpUpload.mutate()} loading={tpUpload.isPending} testID="tidepool-upload-button" style={{ marginTop: spacing.sm }} />
 
         <Hint>
           This app is for information only. Don&apos;t make treatment decisions from it alone. Confirm with a meter and follow your care
@@ -947,9 +673,8 @@ export default function SettingsScreen() {
       <ContactSheet
         visible={editing !== null}
         contact={editing !== null && editing >= 0 ? draft.em_contacts[editing] : null}
-        smsDefault={draft.em_sms_schedule}
-        callDefault={draft.em_call_schedule}
         onSave={(c) => {
+          if (draft.em_contacts.some((x, j) => x.phone === c.phone && j !== editing)) return toast("This phone number is already a contact", "error");
           const list = [...draft.em_contacts];
           if (editing !== null && editing >= 0) list[editing] = c;
           else list.push(c);
@@ -1022,119 +747,3 @@ export default function SettingsScreen() {
     </View>
   );
 }
-
-function TimingFields({
-  value,
-  onChange,
-  testIDPrefix,
-}: {
-  value: { repeat_minutes?: number; snooze_minutes?: number };
-  onChange: (v: { repeat_minutes?: number; snooze_minutes?: number }) => void;
-  testIDPrefix: string;
-}) {
-  const num = (t: string) => Math.min(720, parseInt(t.replace(/\D/g, ""), 10) || 0);
-  return (
-    <View style={{ marginTop: spacing.md }}>
-      <Field
-        label="Repeat every"
-        value={String(value.repeat_minutes ?? 1)}
-        onChangeText={(t) => onChange({ repeat_minutes: num(t) })}
-        keyboardType="number-pad"
-        suffix="min"
-        testID={`${testIDPrefix}-repeat-input`}
-      />
-      <Field
-        label="Snooze for"
-        value={String(value.snooze_minutes ?? 30)}
-        onChangeText={(t) => onChange({ snooze_minutes: num(t) })}
-        keyboardType="number-pad"
-        suffix="min"
-        testID={`${testIDPrefix}-snooze-input`}
-        last
-      />
-    </View>
-  );
-}
-
-function SoundButton({ onPress, testID }: { onPress: () => void; testID: string }) {
-  const { colors } = useTheme();
-  return (
-    <Pressable testID={testID} onPress={onPress} hitSlop={6} style={{ width: 32, height: 44, alignItems: "center", justifyContent: "center" }}>
-      <Ionicons name="musical-notes" size={20} color={colors.onSurfaceTertiary} />
-    </Pressable>
-  );
-}
-
-function SwitchLike({ value, onChange, testID }: { value: boolean; onChange: (v: boolean) => void; testID: string }) {
-  const { colors } = useTheme();
-  return (
-    <Pressable testID={testID} onPress={() => onChange(!value)} hitSlop={8} style={{ width: 36, height: 44, alignItems: "center", justifyContent: "center" }}>
-      <Ionicons name={value ? "notifications" : "notifications-off-outline"} size={22} color={value ? colors.brandPrimary : colors.muted} />
-    </Pressable>
-  );
-}
-
-const useStyles = makeStyles((c) => ({
-  root: { flex: 1, backgroundColor: c.surface },
-  center: { alignItems: "center", justifyContent: "center" },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.sm,
-    backgroundColor: c.surface,
-    borderBottomWidth: 0.5,
-    borderBottomColor: c.divider,
-  },
-  title: { fontFamily: fonts.display, fontSize: 28, fontWeight: "700", color: c.onSurface },
-  saveBtn: { backgroundColor: c.brandPrimary, borderRadius: radius.pill, paddingHorizontal: spacing.xl, minHeight: 40, minWidth: 80, alignItems: "center", justifyContent: "center" },
-  saveText: { color: c.onBrandPrimary, fontFamily: fonts.text, fontWeight: "700", fontSize: 15 },
-  radioRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: spacing.md },
-  topBorder: { borderTopWidth: 0.5, borderTopColor: c.divider },
-  bottomBorder: { borderBottomWidth: 0.5, borderBottomColor: c.divider },
-  radioTitle: { fontFamily: fonts.text, fontSize: 15, fontWeight: "600", color: c.onSurface },
-  radioSub: { fontFamily: fonts.text, fontSize: 12, color: c.muted, marginTop: 2 },
-  subCard: { marginTop: spacing.sm, paddingVertical: spacing.xs },
-  inlineChips: { paddingTop: spacing.sm },
-  inlineLabel: { fontFamily: fonts.text, fontSize: 13, color: c.muted },
-  syncRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.md },
-  syncText: { flex: 1, fontFamily: fonts.text, fontSize: 13, color: c.onSurfaceTertiary },
-  alarmRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 52 },
-  swatch: { width: 12, height: 12, borderRadius: 6 },
-  soundRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 48 },
-  fixedThr: { lineHeight: 40, color: c.muted, overflow: "hidden" },
-  legendRow: { flexDirection: "row", gap: spacing.lg, marginTop: spacing.sm, marginHorizontal: spacing.xs },
-  legendItem: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  thrInput: {
-    width: 72,
-    height: 40,
-    backgroundColor: c.surface,
-    borderRadius: radius.sm,
-    textAlign: "center",
-    fontFamily: fonts.display,
-    fontSize: 17,
-    fontWeight: "700",
-    color: c.onSurface,
-  },
-  unitText: { width: 50, fontFamily: fonts.text, fontSize: 12, color: c.muted },
-  subTitle: { fontFamily: fonts.text, fontSize: 13, fontWeight: "700", color: c.muted, marginTop: spacing.lg, marginBottom: spacing.sm, marginLeft: spacing.xs },
-  contactRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 56 },
-  iconBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  logLine: { fontFamily: fonts.text, fontSize: 12, color: c.onSurfaceTertiary, marginTop: spacing.xs, marginHorizontal: spacing.xs },
-  err: { fontFamily: fonts.text, fontSize: 12, color: c.error, marginTop: spacing.sm, marginHorizontal: spacing.xs },
-  backdrop: { ...({ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } as const), backgroundColor: c.scrim },
-  sheet: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: c.surfaceSecondary,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
-    padding: spacing.xl,
-    gap: spacing.md,
-  },
-  sheetTitle: { fontFamily: fonts.display, fontSize: 22, fontWeight: "700", color: c.onSurface },
-  sheetBody: { fontFamily: fonts.text, fontSize: 15, lineHeight: 22, color: c.onSurfaceTertiary },
-}));

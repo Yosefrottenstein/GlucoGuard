@@ -9,6 +9,8 @@ import { api, Settings } from "@/src/api";
 import { bleSupported, FoundDevice, requestAndroidBluetooth, scan, SENSORS, waitForState } from "@/src/ble";
 import { useToast } from "@/src/components/Toast";
 import { useG7Status } from "@/src/g7";
+import { loadLibre2, useLibre2Status } from "@/src/libre2";
+import { LibreScanError, nfcAvailable, scanLibre2 } from "@/src/libreNfc";
 import { Button, Card, Hint } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -23,14 +25,38 @@ export default function SensorScreen() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/settings") });
   const g7 = useG7Status();
+  const libre = useLibre2Status();
   const [phase, setPhase] = useState<Phase>("intro");
   const [devices, setDevices] = useState<FoundDevice[]>([]);
+  const [libreSerial, setLibreSerial] = useState<string | null>(null);
+  const [hasNfc, setHasNfc] = useState(false);
   const stopRef = useRef<null | (() => void)>(null);
 
   useEffect(() => () => stopRef.current?.(), []);
+  useEffect(() => {
+    nfcAvailable().then(setHasNfc);
+    loadLibre2().then((s) => setLibreSerial(s?.serial ?? null)).catch(() => {});
+  }, []);
 
   const sensor = settings.data?.bt_sensor ?? "dexcom_g6";
   const info = SENSORS[sensor];
+
+  const nfcScan = useMutation({
+    mutationFn: async () => {
+      const s = await scanLibre2();
+      return api<Settings>("/settings", {
+        method: "PUT",
+        body: { source: "bluetooth", bt_sensor: "libre2", bt_device_id: "", bt_device_name: `Libre 2 ${s.serial}`, sensor_days: 14 },
+      }).then((data) => ({ data, serial: s.serial }));
+    },
+    onSuccess: ({ data, serial }) => {
+      setLibreSerial(serial);
+      qc.setQueryData(["settings"], data);
+      qc.invalidateQueries();
+      toast("Libre 2 ready. Readings start in about a minute.", "success");
+    },
+    onError: (e: Error) => toast(e instanceof LibreScanError ? e.message : "Scan didn't finish. Hold the phone still on the sensor and try again.", "error"),
+  });
 
   const startScan = async () => {
     if (Platform.OS === "android") {
@@ -65,7 +91,8 @@ export default function SensorScreen() {
       qc.setQueryData(["settings"], data);
       qc.invalidateQueries();
       toast("Sensor paired", "success");
-      router.back();
+      if (router.canGoBack()) router.back();
+      else router.replace("/settings");
     },
     onError: (e: Error) => toast(e.message, "error"),
   });
@@ -73,7 +100,7 @@ export default function SensorScreen() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Pressable testID="sensor-back-button" onPress={() => router.back()} style={styles.back} hitSlop={8}>
+        <Pressable testID="sensor-back-button" onPress={() => (router.canGoBack() ? router.back() : router.replace("/settings"))} style={styles.back} hitSlop={8}>
           <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
         </Pressable>
         <Text style={styles.title}>Pair sensor</Text>
@@ -96,9 +123,55 @@ export default function SensorScreen() {
               {g7.lastValue ? ` · Last value ${g7.lastValue} mg/dL` : ""}
             </Text>
           ) : null}
+          {sensor === "libre2" && settings.data?.source === "bluetooth" && bleSupported ? (
+            <Text style={styles.body} testID="sensor-live-status">
+              Status: {libre.message}
+              {libre.lastValue ? ` · Last value ${libre.lastValue} mg/dL` : ""}
+            </Text>
+          ) : null}
         </Card>
 
-        {!bleSupported ? (
+        {sensor === "libre3" ? (
+          <Card testID="sensor-libre3-card">
+            <Ionicons name="lock-closed" size={28} color={colors.brandPrimary} />
+            <Text style={styles.cardTitle}>Libre 3 can&apos;t be read directly</Text>
+            <Text style={styles.body}>
+              Abbott protects Libre 3 with strong encryption. No open-source app, including xDrip+, can read it by Bluetooth. Use Follower
+              mode with LibreLinkUp: your Libre 3 app uploads and this app shows the readings, alarms and emergency messages.
+            </Text>
+            <Button
+              title="Switch to LibreLinkUp"
+              onPress={async () => {
+                const data = await api<Settings>("/settings", { method: "PUT", body: { source: "libre" } }).catch(() => null);
+                if (data) {
+                  qc.setQueryData(["settings"], data);
+                  if (router.canGoBack()) router.back();
+                  else router.replace("/settings");
+                }
+              }}
+              testID="sensor-libre3-follower-button"
+              style={{ marginTop: spacing.md }}
+            />
+          </Card>
+        ) : sensor === "libre2" && bleSupported ? (
+          <Card testID="sensor-libre2-card">
+            <Ionicons name="scan" size={28} color={colors.brandPrimary} />
+            <Text style={styles.cardTitle}>{libreSerial ? `Sensor ${libreSerial}` : "Scan your Libre 2"}</Text>
+            <Text style={styles.body}>
+              {hasNfc
+                ? "Hold the top of your phone on the sensor. This reads its calibration and turns on Bluetooth. Scan again after putting on a new sensor."
+                : "This phone has no NFC (or it's turned off). NFC is needed once per sensor to switch on Bluetooth."}
+            </Text>
+            <Button
+              title={libreSerial ? "Scan again" : "Scan sensor"}
+              onPress={() => nfcScan.mutate()}
+              loading={nfcScan.isPending}
+              disabled={!hasNfc}
+              testID="sensor-libre2-scan-button"
+              style={{ marginTop: spacing.md }}
+            />
+          </Card>
+        ) : !bleSupported ? (
           <Card testID="sensor-needs-build-card">
             <Ionicons name="phone-portrait-outline" size={28} color={colors.brandPrimary} />
             <Text style={styles.cardTitle}>Needs the installed app</Text>
@@ -161,7 +234,11 @@ export default function SensorScreen() {
         <Hint>
           {sensor === "dexcom_g7"
             ? "Live G7 readings work while the official Dexcom G7 app keeps running. Starting a new sensor is still done in the Dexcom app."
-            : `Pairing saves your sensor. Reading glucose straight from ${info.label} isn't built yet. Until then, use Follower mode or manual entry.`}
+            : sensor === "libre2"
+              ? "Libre 2 readings use Abbott's factory calibration, worked out the same way as xDrip+ and DiaBLE. Values can differ slightly from the Libre app. Check with a meter before treating."
+              : sensor === "libre3"
+                ? "Libre 2 and European Libre 2 Plus can be read directly; pick Libre 2 in Settings if you have one."
+                : `Pairing saves your sensor. Reading glucose straight from ${info.label} isn't built yet. Until then, use Follower mode or manual entry.`}
         </Hint>
       </ScrollView>
     </View>

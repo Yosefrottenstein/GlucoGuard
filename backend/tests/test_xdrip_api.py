@@ -20,6 +20,12 @@ if not BASE_URL:
 def api():
     s = requests.Session()
     s.headers["Content-Type"] = "application/json"
+    # Register-or-login demo_user then attach bearer so all legacy tests hit per-user data
+    creds = {"username": "demo_user", "password": "demo12345"}
+    s.post(f"{BASE_URL}/api/auth/register", json=creds)  # 201 or 409
+    lr = s.post(f"{BASE_URL}/api/auth/login", json=creds)
+    assert lr.status_code == 200, f"demo_user login failed: {lr.text}"
+    s.headers["Authorization"] = f"Bearer {lr.json()['access_token']}"
     return s
 
 
@@ -206,6 +212,7 @@ class TestAISummary:
         start = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         end = datetime.now(timezone.utc).isoformat()
         r = requests.post(f"{BASE_URL}/api/ai/summary", json={"start": start, "end": end, "label": "TEST_today"},
+                          headers={"Authorization": api.headers["Authorization"]},
                           stream=True, timeout=60)
         assert r.status_code == 200
         chunks = []

@@ -1,36 +1,32 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { Contact as PhoneContact } from "expo-contacts";
 import { useEffect, useState } from "react";
-import { Modal, Platform, Pressable, ScrollView, Text, View } from "react-native";
+import { Linking, Modal, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { ChannelSchedule, Contact } from "@/src/api";
+import { isAndroid, phoneSmsSupported, requestSmsPermission, smsPermission } from "@/src/phoneSms";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
-import { describeSchedule, ScheduleEditor, validTime } from "./ScheduleEditor";
+import { ScheduleEditor } from "./ScheduleEditor";
 import { useToast } from "./Toast";
 import { Button, Field, ToggleRow } from "./ui";
 
-const fresh = (): Contact => ({
-  name: "",
-  phone: "",
-  sms: { enabled: true, mode: "default", start: "00:00", end: "07:00" },
-  call: { enabled: true, mode: "default", start: "00:00", end: "07:00" },
-});
+const channel = (enabled: boolean): ChannelSchedule => ({ enabled, mode: "always", windows: [], repeat_minutes: 5 });
+const fresh = (): Contact => ({ name: "", phone: "", sms: channel(true), call: channel(false), sms_via: "cloud" });
+const minutes = (t: string) => Math.min(720, parseInt(t.replace(/\D/g, ""), 10) || 0);
+// older saves may still say "default"; show them as "any time"
+const clean = (s: ChannelSchedule): ChannelSchedule => ({ ...channel(s.enabled), ...s, mode: s.mode === "hours" ? "hours" : "always" });
 
 export function ContactSheet({
   visible,
   contact,
-  smsDefault,
-  callDefault,
   onSave,
   onDelete,
   onClose,
 }: {
   visible: boolean;
   contact: Contact | null;
-  smsDefault: ChannelSchedule;
-  callDefault: ChannelSchedule;
   onSave: (c: Contact) => void;
   onDelete?: () => void;
   onClose: () => void;
@@ -40,9 +36,13 @@ export function ContactSheet({
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const [c, setC] = useState<Contact>(fresh());
+  const [smsPerm, setSmsPerm] = useState<null | "ask" | "settings">(null);
 
   useEffect(() => {
-    if (visible) setC(contact ? { ...fresh(), ...contact } : fresh());
+    if (!visible) return;
+    const base = contact ? { ...fresh(), ...contact } : fresh();
+    setC({ ...base, sms: clean(base.sms), call: clean(base.call) });
+    setSmsPerm(null);
   }, [visible, contact]);
 
   const pickFromPhone = async () => {
@@ -59,13 +59,17 @@ export function ContactSheet({
     }
   };
 
+  const choosePhoneSms = async () => {
+    setC((x) => ({ ...x, sms_via: "phone" }));
+    if (phoneSmsSupported && !(await smsPermission())) setSmsPerm("ask");
+  };
+  const askSms = async () => setSmsPerm((await requestSmsPermission()) === "granted" ? null : "settings");
+
   const save = () => {
     const phone = c.phone.replace(/[\s()-]/g, "");
     if (!c.name.trim()) return toast("Enter a nickname", "error");
     if (!/^\+\d{7,15}$/.test(phone)) return toast("Phone must start with + and country code, e.g. +15551234567", "error");
-    for (const s of [c.sms, c.call]) {
-      if (s.mode === "hours" && !(validTime(s.start) && validTime(s.end))) return toast("Enter hours as HH:MM", "error");
-    }
+    if (c.sms.repeat_minutes < 1 || c.call.repeat_minutes < 1) return toast("Resend time must be at least 1 minute", "error");
     onSave({ ...c, name: c.name.trim(), phone });
   };
 
@@ -87,33 +91,89 @@ export function ContactSheet({
             <Field label="Phone" value={c.phone} onChangeText={(v) => setC({ ...c, phone: v })} placeholder="+15551234567" keyboardType="phone-pad" testID="contact-phone-input" last />
 
             <Text style={styles.section}>Text messages</Text>
-            <ToggleRow label="Send texts to this contact" value={c.sms.enabled} onChange={(v) => setC({ ...c, sms: { ...c.sms, enabled: v } })} testID="contact-sms-toggle" last />
+            <ToggleRow label="Send texts to this contact" value={c.sms.enabled} onChange={(v) => setC({ ...c, sms: { ...c.sms, enabled: v } })} testID="contact-sms-toggle" last={!c.sms.enabled} />
             {c.sms.enabled && (
-              <ScheduleEditor
-                value={c.sms}
-                onChange={(v) => setC({ ...c, sms: v })}
-                allowDefault
-                defaultText={`Uses your default text hours (${describeSchedule(smsDefault)})`}
-                testIDPrefix="contact-sms-schedule"
-              />
+              <>
+                {isAndroid && (
+                  <View style={styles.viaBox}>
+                    {[
+                      { v: "phone" as const, t: "From this phone's SIM card", s: "Like xDrip+: no Twilio. Needs signal and the app running." },
+                      { v: "cloud" as const, t: "From the cloud (Twilio)", s: "Works even if this phone is off or has no signal" },
+                    ].map((o) => (
+                      <Pressable
+                        key={o.v}
+                        testID={`contact-sms-via-${o.v}`}
+                        onPress={() => (o.v === "phone" ? choosePhoneSms() : setC({ ...c, sms_via: "cloud" }))}
+                        style={styles.radioRow}
+                      >
+                        <Ionicons name={c.sms_via === o.v ? "radio-button-on" : "radio-button-off"} size={22} color={c.sms_via === o.v ? colors.brandPrimary : colors.borderStrong} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.radioTitle}>{o.t}</Text>
+                          <Text style={styles.radioSub}>{o.s}</Text>
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+                {smsPerm && (
+                  <View style={styles.permBox} testID="contact-sms-permission">
+                    <Text style={styles.radioSub}>
+                      {smsPerm === "settings"
+                        ? "SMS permission is off for this app. Turn it on in Settings so emergency texts can go out from your SIM card."
+                        : "If a severe low isn't snoozed, the app texts this contact straight from your phone, even while you can't."}
+                    </Text>
+                    <Button
+                      title={smsPerm === "settings" ? "Open Settings" : "Allow sending texts"}
+                      onPress={smsPerm === "settings" ? () => Linking.openSettings() : askSms}
+                      testID="contact-sms-permission-button"
+                      style={{ marginTop: spacing.sm }}
+                    />
+                  </View>
+                )}
+                {isAndroid && c.sms_via === "phone" && !phoneSmsSupported && (
+                  <Text style={styles.radioSub}>Texts from the SIM card work in the installed Android app, not in Expo Go.</Text>
+                )}
+                <Text style={styles.label}>When to text</Text>
+                <ScheduleEditor value={c.sms} onChange={(v) => setC({ ...c, sms: v })} testIDPrefix="contact-sms-schedule" />
+                <Field
+                  label="Text again every"
+                  value={String(c.sms.repeat_minutes)}
+                  onChangeText={(t) => setC({ ...c, sms: { ...c.sms, repeat_minutes: minutes(t) } })}
+                  keyboardType="number-pad"
+                  suffix="min"
+                  testID="contact-sms-repeat-input"
+                  last
+                />
+              </>
             )}
 
             <Text style={styles.section}>Voice calls</Text>
-            <ToggleRow label="Call this contact" value={c.call.enabled} onChange={(v) => setC({ ...c, call: { ...c.call, enabled: v } })} testID="contact-call-toggle" last />
+            <ToggleRow
+              label="Call this contact"
+              sub="A voice reads the alert aloud (Twilio)"
+              value={c.call.enabled}
+              onChange={(v) => setC({ ...c, call: { ...c.call, enabled: v } })}
+              testID="contact-call-toggle"
+              last={!c.call.enabled}
+            />
             {c.call.enabled && (
-              <ScheduleEditor
-                value={c.call}
-                onChange={(v) => setC({ ...c, call: v })}
-                allowDefault
-                defaultText={`Uses your default call hours (${describeSchedule(callDefault)})`}
-                testIDPrefix="contact-call-schedule"
-              />
+              <>
+                <Text style={styles.label}>When to call</Text>
+                <ScheduleEditor value={c.call} onChange={(v) => setC({ ...c, call: v })} testIDPrefix="contact-call-schedule" />
+                <Field
+                  label="Call again every"
+                  value={String(c.call.repeat_minutes)}
+                  onChangeText={(t) => setC({ ...c, call: { ...c.call, repeat_minutes: minutes(t) } })}
+                  keyboardType="number-pad"
+                  suffix="min"
+                  testID="contact-call-repeat-input"
+                  last
+                />
+              </>
             )}
 
             <Button title="Save contact" onPress={save} testID="contact-save-button" style={{ marginTop: spacing.lg }} />
-            {onDelete && (
-              <Button title="Remove contact" kind="secondary" onPress={onDelete} testID="contact-delete-button" style={{ marginTop: spacing.sm }} />
-            )}
+            {onDelete && <Button title="Remove contact" kind="secondary" onPress={onDelete} testID="contact-delete-button" style={{ marginTop: spacing.sm }} />}
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
@@ -130,7 +190,7 @@ const useStyles = makeStyles((c) => ({
     borderTopRightRadius: radius.lg,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
-    maxHeight: "90%",
+    maxHeight: "92%",
   },
   handle: { alignSelf: "center", width: 40, height: 5, borderRadius: 3, backgroundColor: c.borderStrong, marginBottom: spacing.md },
   title: { fontFamily: fonts.display, fontSize: 22, fontWeight: "700", color: c.onSurface, marginBottom: spacing.sm },
@@ -151,7 +211,13 @@ const useStyles = makeStyles((c) => ({
     fontWeight: "700",
     letterSpacing: 0.6,
     color: c.muted,
-    marginTop: spacing.lg,
+    marginTop: spacing.xl,
     textTransform: "uppercase",
   },
+  label: { fontFamily: fonts.text, fontSize: 13, color: c.muted, marginTop: spacing.md, marginBottom: spacing.xs },
+  viaBox: { backgroundColor: c.surface, borderRadius: radius.md, paddingHorizontal: spacing.md, marginTop: spacing.sm },
+  radioRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: spacing.sm, minHeight: 48 },
+  radioTitle: { fontFamily: fonts.text, fontSize: 15, fontWeight: "600", color: c.onSurface },
+  radioSub: { fontFamily: fonts.text, fontSize: 12, color: c.muted, marginTop: 2 },
+  permBox: { backgroundColor: c.surface, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm },
 }));

@@ -31,6 +31,7 @@ class Reading(BaseDocument):
     source: str
     ns_uploaded: bool = False
     tp_uploaded: bool = False
+    dx_uploaded: bool = False
 
 
 class Treatment(BaseDocument):
@@ -53,12 +54,42 @@ class EmergencyLog(BaseDocument):
 HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
 
 
+ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]  # Monday = 0
+
+
+class TimeWindow(BaseModel):
+    days: list[int] = Field(default_factory=lambda: list(ALL_DAYS), min_length=1, max_length=7)
+    start: str = Field(default="00:00", pattern=HHMM)
+    end: str = Field(default="07:00", pattern=HHMM)
+
+    @model_validator(mode="after")
+    def _days(self):
+        if any(d < 0 or d > 6 for d in self.days):
+            raise ValueError("days must be 0 (Monday) to 6 (Sunday)")
+        self.days = sorted(set(self.days))
+        return self
+
+
 class ChannelSchedule(BaseModel):
     enabled: bool = True
-    # "default" (contacts only) follows the global hours for this channel
-    mode: Literal["default", "always", "hours"] = "default"
-    start: str = Field(default="00:00", pattern=HHMM)
-    end: str = Field(default="06:00", pattern=HHMM)
+    # "default" is from older saves and follows the global hours; the app now always saves always/hours per contact
+    mode: Literal["default", "always", "hours"] = "always"
+    windows: list[TimeWindow] = Field(default=[], max_length=10)
+    repeat_minutes: int = Field(default=5, ge=1, le=720)  # resend while glucose stays at the same alarm level
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate(cls, data):
+        # older saves had a single start/end every day
+        if isinstance(data, dict) and not data.get("windows") and data.get("start"):
+            data = {**data, "windows": [{"days": ALL_DAYS, "start": data["start"], "end": data.get("end", "07:00")}]}
+        return data
+
+    @model_validator(mode="after")
+    def _need_window(self):
+        if self.mode == "hours" and not self.windows:
+            self.windows = [TimeWindow()]
+        return self
 
 
 class Contact(BaseModel):
@@ -66,6 +97,8 @@ class Contact(BaseModel):
     phone: str = Field(pattern=r"^\+\d{7,15}$")
     sms: ChannelSchedule = ChannelSchedule()
     call: ChannelSchedule = ChannelSchedule()
+    # "cloud" = Twilio; "phone" = the user's Android phone sends it from its own SIM card
+    sms_via: Literal["cloud", "phone"] = "cloud"
 
 
 class AlarmSound(BaseModel):
@@ -162,6 +195,9 @@ class AppSettings(BaseModel):
     dexcom_username: str = ""
     dexcom_password: str = ""
     dexcom_region: Literal["us", "ous", "jp"] = "us"
+    # Dexcom Share upload (Master mode), uses the Dexcom login above
+    dx_upload: bool = False
+    dx_serial: str = Field(default="SM00000000", pattern=r"^[A-Z0-9]{4,16}$")
     # LibreLinkUp
     libre_email: str = ""
     libre_password: str = ""
@@ -170,20 +206,42 @@ class AppSettings(BaseModel):
     tp_password: str = ""
     tp_upload: bool = False
     tp_env: Literal["production", "integration"] = "production"
-    # Emergency messages
+    # Emergency messages: texts and calls are set up per contact (on/off, hours, resend interval, how texts go)
     em_enabled: bool = False
     em_name: str = ""
     em_contacts: list[Contact] = []
-    em_sms: bool = True
-    em_call: bool = False
-    em_sms_schedule: ChannelSchedule = ChannelSchedule(mode="always")
-    em_call_schedule: ChannelSchedule = ChannelSchedule(mode="hours", start="00:00", end="07:00")
     tz: str = "UTC"
     em_triggers: list[Literal["urgent_low", "low", "high", "urgent_high"]] = ["urgent_low"]
     em_delay_minutes: int = Field(default=15, ge=0, le=240)
-    em_sms_repeat_minutes: int = Field(default=5, ge=1, le=720)
-    em_call_repeat_minutes: int = Field(default=5, ge=1, le=720)
     em_location: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _contacts_own_channels(cls, data):
+        # Older saves kept on/off, hours and resend for texts/calls globally; move them into each contact.
+        if not isinstance(data, dict) or "em_sms_schedule" not in data:
+            return data
+        data = dict(data)
+        contacts = []
+        for c in data.get("em_contacts") or []:
+            c = dict(c)
+            for ch in ("sms", "call"):
+                own = dict(c.get(ch) or {})
+                glob = dict(data.get(f"em_{ch}_schedule") or {})
+                if own.get("mode", "default") == "default":
+                    own.update({k: glob[k] for k in ("mode", "windows", "start", "end") if k in glob})
+                    if own.get("mode") == "default":
+                        own["mode"] = "always"
+                if data.get(f"em_{ch}") is False:
+                    own["enabled"] = False
+                own.setdefault("repeat_minutes", data.get(f"em_{ch}_repeat_minutes", 5))
+                c[ch] = own
+            c.setdefault("sms_via", data.get("em_sms_via", "cloud"))
+            contacts.append(c)
+        data["em_contacts"] = contacts
+        for k in ("em_sms", "em_call", "em_sms_via", "em_sms_schedule", "em_call_schedule", "em_sms_repeat_minutes", "em_call_repeat_minutes"):
+            data.pop(k, None)
+        return data
 
     def public(self) -> dict:
         data = self.model_dump()
@@ -219,6 +277,11 @@ class TreatmentIn(BaseModel):
 class LocationIn(BaseModel):
     lat: float
     lon: float
+
+
+class SmsResultIn(BaseModel):
+    ok: bool
+    error: Optional[str] = Field(default=None, max_length=200)
 
 
 class AckIn(BaseModel):

@@ -1,21 +1,27 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
+import { AppState } from "react-native";
 
 import { api, Settings } from "@/src/api";
 import { bleSupported } from "@/src/ble";
 import { setG7ActivationHandler, startG7, stopG7 } from "@/src/g7";
+import { startLibre2, stopLibre2 } from "@/src/libre2";
+import { drainSmsOutbox, phoneSmsSupported } from "@/src/phoneSms";
 import { scheduleReminders, scheduleSensorAlerts } from "@/src/sensorAlerts";
 
-// App-wide background work: direct Bluetooth reader (Master > Bluetooth > G7) and sensor-ending reminders.
+// App-wide background work: direct Bluetooth readers (G7, Libre 2), phone texts and sensor-ending reminders.
 export function SensorCollector() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/settings") });
   const s = settings.data;
-  const active = bleSupported && s?.source === "bluetooth" && s.bt_sensor === "dexcom_g7";
+  const bt = bleSupported && s?.source === "bluetooth";
+  const g7 = bt && s?.bt_sensor === "dexcom_g7";
+  const libre2 = bt && s?.bt_sensor === "libre2";
   const deviceId = s?.bt_device_id || undefined;
+  const phoneSms = phoneSmsSupported && s?.em_enabled && s.em_contacts.some((c) => c.sms.enabled && c.sms_via === "phone");
 
   useEffect(() => {
-    if (!active) return;
+    if (!g7) return;
     setG7ActivationHandler(async (activatedAt) => {
       const current = qc.getQueryData<Settings>(["settings"]);
       const known = current?.sensor_started_at ? Date.parse(current.sensor_started_at) : 0;
@@ -31,7 +37,24 @@ export function SensorCollector() {
     });
     startG7(deviceId);
     return () => stopG7();
-  }, [active, deviceId, qc]);
+  }, [g7, deviceId, qc]);
+
+  useEffect(() => {
+    if (!libre2) return;
+    startLibre2(deviceId);
+    return () => stopLibre2();
+  }, [libre2, deviceId]);
+
+  useEffect(() => {
+    if (!phoneSms) return;
+    drainSmsOutbox();
+    const t = setInterval(drainSmsOutbox, 20000);
+    const sub = AppState.addEventListener("change", (st) => st === "active" && drainSmsOutbox());
+    return () => {
+      clearInterval(t);
+      sub.remove();
+    };
+  }, [phoneSms]);
 
   useEffect(() => {
     if (s) scheduleSensorAlerts(s).catch(() => {});

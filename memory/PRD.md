@@ -38,3 +38,17 @@ tap a dot on the chart to see value + time, compatible with as many sensors as p
 - Alarm sounds: 6 bundled sounds, per preset alarm style/sound/repeat/snooze; extreme low (<50 mg/dL) sound-only.
 - Custom reminders (daily/once) and custom glucose alarms (below/above value) with own sound/repeat/snooze.
 - Iteration 2 tests: 45/45 backend, frontend flows pass.
+- Multi-user: username+password sign-in (JWT 60d, bcrypt, 5-try lockout), all data scoped by uid via Scoped collection wrapper (backend/auth.py), sync loop per user. Sign-out in Settings. Iteration 3: 61/61 backend tests.
+- Backlog: password change, G7 backfill.
+
+## Iteration 4–5 (2026-11-10)
+- Emergency texts/calls are configured PER CONTACT only (contact sheet): text on/off, how texts go (Android: phone SIM vs Twilio cloud),
+  when to text (Any time / Only at set hours with multiple windows, weekday circles, tap hour/minute grid), text-again interval;
+  same for voice calls. Global SMS/call settings removed; legacy saves auto-migrate into contacts. Duplicate phone numbers rejected.
+- Android SIM texting: local Expo module modules/direct-sms (SmsManager), server queues /api/sms/outbox, phone drains + reports;
+  unpicked texts expire after 30 min with a log line. Needs installed Android build.
+- Dexcom Share upload (Master mode, user's own Dexcom login, receiver serial, demo data never uploaded).
+- Libre 2 / EU Libre 2 Plus direct: NFC scan (react-native-nfc-manager) reads FRAM calibration + enables streaming, BLE decrypt
+  (port of DiaBLE Libre2.swift) + factory calibration (src/libre2.ts, libreNfc.ts). Libre 3 / Gen2 2 Plus: explained not possible.
+- Nightscout/Tidepool/Dexcom upload sections: toggle first, fields appear when on. Settings split into src/components/settings/*.
+- Iteration 5: 91/91 backend tests, frontend flows pass.

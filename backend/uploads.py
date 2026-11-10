@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import httpx
 
 from models import AppSettings, Reading, Treatment
-from sources import ns_auth
+from sources import DEXCOM, ns_auth
 
 DEVICE = "xDrip-iOS"
 
@@ -32,6 +32,43 @@ async def upload_nightscout(s: AppSettings, readings: list[Reading], treatments:
             resp = await c.post(f"{base}/api/v1/treatments", headers=headers, params=params, json=body)
             if resp.status_code >= 400:
                 raise RuntimeError(f"Nightscout rejected treatments ({resp.status_code}).")
+
+
+SHARE_TREND = {"DoubleUp": 1, "SingleUp": 2, "FortyFiveUp": 3, "Flat": 4, "FortyFiveDown": 5, "SingleDown": 6,
+               "DoubleDown": 7, "NOT COMPUTABLE": 8, "RATE OUT OF RANGE": 9}
+
+
+async def upload_dexcom_share(s: AppSettings, readings: list[Reading]) -> None:
+    """Uploads readings to Dexcom Share the way xDrip+ does (unofficial API), so Dexcom Follow sees them."""
+    base, app_id = DEXCOM[s.dexcom_region]
+    sn = s.dx_serial
+    async with httpx.AsyncClient(timeout=30, headers={"User-Agent": "Dexcom Share/3.0.2.11", "Accept": "application/json"}) as c:
+        r = await c.post(f"{base}/General/LoginPublisherAccountByName",
+                         json={"accountName": s.dexcom_username, "password": s.dexcom_password, "applicationId": app_id})
+        if r.status_code != 200:
+            raise RuntimeError("Dexcom login failed. Check username, password and region.")
+        session = r.json()
+        # Dexcom answers wrong logins with HTTP 200 and an all-zero session id
+        if not session or session == "00000000-0000-0000-0000-000000000000":
+            raise RuntimeError("Dexcom login failed. Check username, password and region.")
+        q = {"sessionId": session, "serialNumber": sn}
+        r = await c.post(f"{base}/Publisher/CheckMonitoredReceiverAssignmentStatus", params=q, json={})
+        if r.status_code == 200 and r.json() == "AssignedToOther":
+            raise RuntimeError(f"Receiver {sn} belongs to another Dexcom account. Change the receiver serial.")
+        if r.status_code != 200 or r.json() == "NotAssigned":
+            await c.post(f"{base}/Publisher/ReplacePublisherAccountMonitoredReceiver", params=q, json={})
+        r = await c.post(f"{base}/Publisher/IsRemoteMonitoringSessionActive", params={"sessionId": session}, json={})
+        if r.status_code != 200 or r.json() is not True:
+            await c.post(f"{base}/Publisher/StartRemoteMonitoringSession", params=q, json={})
+        egvs = []
+        for rd in readings:
+            ms = int(rd.ts.timestamp() * 1000)
+            egvs.append({"Trend": SHARE_TREND.get(rd.direction, 0), "ST": f"/Date({ms})/", "DT": f"/Date({ms})/",
+                         "Value": rd.sgv})
+        r = await c.post(f"{base}/Publisher/PostReceiverEgvRecords", params={"sessionId": session},
+                         json={"SN": sn, "TA": -5, "Egvs": egvs})
+        if r.status_code >= 400:
+            raise RuntimeError(f"Dexcom Share rejected the upload ({r.status_code}).")
 
 
 TIDEPOOL = {"production": "https://api.tidepool.org", "integration": "https://external.integration.tidepool.org"}

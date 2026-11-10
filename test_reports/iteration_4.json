@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 4 (schedules, phone SIM SMS outbox, Dexcom Share upload, Nightscout/Tidepool toggle-first, Libre 2/3 screens). Backend: new suite test_iter4_schedules_sms_dexcom.py (18 tests) + legacy suites = 79/79 pass. Covered ChannelSchedule windows (multi-window, per-weekday, day dedup/sort, old {start,end} migration to all-days window, mode=hours with empty windows gets default, 422 on bad day/time/mode), contact schedules, cloud mode without Twilio -> 400 'Twilio keys missing', phone mode -> 'Text to X handed to your phone' + outbox item, POST /sms/outbox/{id} marks done and logs 'Phone text to X failed: ...', bad ids 404, weekday window respected ('No call to X (outside the set hours)'), contact sms disabled -> 'off for this contact', dx_serial regex 422, /dexcom/upload no creds 400. FOUND+FIXED BUG: with fake Dexcom creds the API returned 400 'Dexcom Share rejected the upload (500).' instead of a login error, because Dexcom answers bad logins with HTTP 200 + session 00000000-0000-0000-0000-000000000000; added a null-GUID check in uploads.py, now 'Dexcom login failed. Check username, password and region.'. Frontend (375x667 web): Nightscout/Tidepool show only the Upload toggle until on, then URL/secret and email/password (+ Upload now) appear and hide again when off; Master mode Dexcom Share toggle reveals username/password/region/serial; Voice calls ScheduleEditor Always/Custom hours, Weekend preset + day circle toggle, From/To hour/minute grids (22:30, 06:15), add window, remove window via trash, Save, reload shows same 2 windows (verified via API too). Contact sheet: Default/Always/Custom hours for text + call, Weekdays 08:00-17:00 saved, row shows 'Text always · Call Weekdays 08:00–17:00', persists after reload and re-opens with same values. Sensor: libre3 shows 'Libre 3 can't be read directly' card and 'Switch to LibreLinkUp' switches source to libre; libre2 on web shows 'Needs the installed app'. Alarm sound / glucose alarm / reminder sheets still open and close. SMS-via radio is Android-only (isAndroid) so not visible on web, as designed. No deprecated packages (expo-av/barcode-scanner/background-fetch) found; unstable-native-tabs no longer referenced. demo_user reset to em_sms_via=cloud, no contacts, original call/sms schedules and tz.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/dexcom/upload", "issue": "FIXED by tester: bad Dexcom creds produced 'Dexcom Share rejected the upload (500).' (Dexcom returns 200 + all-zero session id). Now raises 'Dexcom login failed...'."},
+      {"endpoint": "POST /api/dexcom/upload", "issue": "Manual upload ignores source: with source=demo it pushes fake demo readings to the user's real Dexcom Share account (background loop correctly skips demo/dexcom). Also returns 200 {uploaded:0} without checking the login when there is nothing new to send, so wrong creds go unnoticed."},
+      {"endpoint": "sms_outbox (phone mode)", "issue": "If the Android phone never drains the outbox (app killed, iPhone, Expo Go), pending texts silently expire after 30 min; the emergency log only says 'handed to your phone' and nothing ever records that it wasn't sent. Consider marking stale items failed + logging, or falling back to Twilio when keys exist."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Sensor screen back button", "issue": "When /sensor is opened directly (web reload/deep link) router.back() has no history and the back button does nothing; user is stuck. Use router.canGoBack() ? back() : replace('/settings'). Reference: /app/frontend/app/sensor.tsx:102", "testID": "sensor-back-button", "priority": "low"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings > Voice calls", "issues": ["Field label 'Call again every' wraps onto 3 lines in a narrow label column at 375px (EmergencySection.tsx:141)"]},
+      {"screen": "ScheduleEditor / TimeGrid", "issues": ["Day circles are 40px tall and hour/minute cells minHeight 40 (< 44pt touch target)", "WindowEditor uses key={i}; removing a window while another window's time grid is open shifts the open grid to the wrong window"]},
+      {"screen": "Sensor > Libre 2 (web)", "issues": ["'Needs the installed app' copy says 'real iPhone app ... TestFlight' even though Libre 2 NFC/BLE + SIM SMS are pitched for Android too"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter4_schedules_sms_dexcom.py", "/app/backend/tests/test_xdrip_iter2.py", "/app/test_reports/pytest/pytest_results_iter4.xml"],
+  "action_items": [
+    "Dexcom manual upload: block (or warn) when source is demo so fake readings are never pushed to a real Dexcom Share account; optionally validate login even when nothing new to upload",
+    "Phone-SMS outbox: log a failure for items that expire undrained (and/or fall back to Twilio) so users know the text was never sent",
+    "sensor.tsx back button: fall back to router.replace('/settings') when !router.canGoBack()",
+    "Minor UI: widen label for 'Call again every', bump day circles/time cells to 44px, use stable keys for schedule windows"
+  ],
+  "critical_code_review_comments": [
+    "settings.tsx is 752 lines (>700) even after the split; consider moving the data-source/sensor-session block into its own section component",
+    "Contacts added in the sheet only persist after tapping the header Save; works, but easy to lose changes if the user navigates away",
+    "Old-format migration only fires when 'start' is present and windows empty - fine for existing saves"
+  ],
+  "updated_files": ["/app/backend/uploads.py (null-GUID Dexcom login check)", "/app/backend/tests/test_iter4_schedules_sms_dexcom.py (new)", "/app/backend/tests/test_xdrip_iter2.py (legacy assert updated to new windows format)"],
+  "success_rate": {"backend": "100% (79/79 after Dexcom login fix)", "frontend": "~95% (all requested flows pass; 1 minor back-button bug)"},
+  "seed_data_creation": "Created throwaway users TEST_it4_* (per pytest worker) and TEST_fe4_ba4888 with TEST_ contacts. demo_user settings were changed during UI tests and restored afterwards (em_sms_via=cloud, em_contacts=[], call schedule 00:00-07:00 all days, sms always, tz UTC).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest backend/tests/` (pytest.ini uses xdist; module api fixture in iter4 suite registers a fresh TEST_ user per worker, so it never touches demo_user). Dexcom Share returns HTTP 200 with session 00000000-0000-0000-0000-000000000000 for bad logins. Fresh users need POST /api/sync to get demo readings before /dexcom/upload does anything. SMS-via radios (emergency-sms-via-phone/cloud) only render on Android, not web. ContactSheet content is inside a ScrollView in a bottom sheet: scrollIntoView via JS before clicking. ScheduleEditor chip testIDs: {prefix}-always/-hours/-default; window: {prefix}-window-N, -day-0..6, -preset-Weekdays, -start, -start-hour-HH, -start-minute-MM, -remove, {prefix}-add-window. Python urllib calls to the public URL get 403 (use requests). Changing demo_user source away from demo deletes its demo readings - use TEST_ users for source/sensor tests.",
+  "rca_of_issue": "Dexcom upload with wrong creds: uploads.upload_dexcom_share only checked r.status_code != 200 on LoginPublisherAccountByName; Dexcom returns 200 with an all-zero GUID for invalid accounts, so the code continued and every subsequent Publisher call returned 500, surfacing 'Dexcom Share rejected the upload (500)'. Mitigation applied: treat empty/all-zero session as login failure."
+}

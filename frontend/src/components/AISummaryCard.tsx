@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
 import { api, apiUrl } from "@/src/api";
+import { authHeaders } from "@/src/auth";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 const BG =
@@ -35,7 +36,7 @@ export function AISummaryCard({ start, end, label }: { start: Date; end: Date; l
     try {
       const res = await expoFetch(apiUrl("/ai/summary"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ start: start.toISOString(), end: end.toISOString(), label }),
       });
       if (!res.ok) {

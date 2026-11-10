@@ -1,3 +1,4 @@
+import { authHeaders, clearSession } from "./auth";
 import type { AlarmSound, AlertStyle, SoundId } from "./sounds";
 
 const BASE = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api`;
@@ -78,8 +79,9 @@ export type Stats = {
   tir?: { very_low: number; low: number; in_range: number; high: number; very_high: number };
 };
 
-export type ChannelSchedule = { enabled: boolean; mode: "default" | "always" | "hours"; start: string; end: string };
-export type Contact = { name: string; phone: string; sms: ChannelSchedule; call: ChannelSchedule };
+export type TimeWindow = { days: number[]; start: string; end: string };
+export type ChannelSchedule = { enabled: boolean; mode: "default" | "always" | "hours"; windows: TimeWindow[]; repeat_minutes: number };
+export type Contact = { name: string; phone: string; sms: ChannelSchedule; call: ChannelSchedule; sms_via: "cloud" | "phone" };
 
 export type Settings = Thresholds & {
   unit: Unit;
@@ -113,6 +115,8 @@ export type Settings = Thresholds & {
   dexcom_password: string;
   dexcom_password_set: boolean;
   dexcom_region: "us" | "ous" | "jp";
+  dx_upload: boolean;
+  dx_serial: string;
   libre_email: string;
   libre_password: string;
   libre_password_set: boolean;
@@ -124,25 +128,20 @@ export type Settings = Thresholds & {
   em_enabled: boolean;
   em_name: string;
   em_contacts: Contact[];
-  em_sms: boolean;
-  em_call: boolean;
-  em_sms_schedule: ChannelSchedule;
-  em_call_schedule: ChannelSchedule;
   tz: string;
   em_triggers: ("urgent_low" | "low" | "high" | "urgent_high")[];
   em_delay_minutes: number;
-  em_sms_repeat_minutes: number;
-  em_call_repeat_minutes: number;
   em_location: boolean;
 };
 
 export async function api<T>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   const res = await fetch(BASE + path, {
     method: opts.method ?? "GET",
-    headers: opts.body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    headers: { ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}), ...authHeaders() },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   const data = await res.json().catch(() => null);
+  if (res.status === 401 && !path.startsWith("/auth/")) await clearSession();
   if (!res.ok) {
     const detail = data?.detail;
     throw new Error(typeof detail === "string" ? detail : `Something went wrong (${res.status})`);

@@ -26,7 +26,9 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "BLUETOOTH_SCAN",
-        "BLUETOOTH_CONNECT"
+        "BLUETOOTH_CONNECT",
+        "NFC",
+        "SEND_SMS"
       ]
     },
     "web": {
@@ -85,6 +87,14 @@
             "./assets/sounds/gentle.wav",
             "./assets/sounds/alert.wav"
           ]
+        }
+      ],
+      [
+        "react-native-nfc-manager",
+        {
+          "nfcPermission": "Scan your Libre sensor to start live readings",
+          "selectIdentifiers": [],
+          "includeNdefEntitlement": false
         }
       ]
     ],

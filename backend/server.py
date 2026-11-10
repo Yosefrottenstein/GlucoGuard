@@ -10,7 +10,7 @@ from typing import Optional
 from xml.sax.saxutils import escape
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING, IndexModel
@@ -20,10 +20,11 @@ from starlette.middleware.cors import CORSMiddleware
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
+from auth import CURRENT_UID, Credentials, Scoped, setup as auth_setup  # noqa: E402
 from models import (SECRET_FIELDS, AckIn, AppSettings, EmergencyLog, LocationIn, Reading,  # noqa: E402
-                    ReadingBatchIn, ReadingIn, SummaryIn, Treatment, TreatmentIn)
+                    ReadingBatchIn, ReadingIn, SmsResultIn, SummaryIn, Treatment, TreatmentIn)
 from sources import demo_readings, direction_from_slope, fetch_source, reset_sessions  # noqa: E402
-from uploads import upload_nightscout, upload_tidepool  # noqa: E402
+from uploads import upload_dexcom_share, upload_nightscout, upload_tidepool  # noqa: E402
 
 client = AsyncIOMotorClient(os.environ["MONGO_URL"], tz_aware=True)
 db = client[os.environ["DB_NAME"]]
@@ -32,14 +33,16 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 
 INDEXES: dict[str, list[IndexModel]] = {
     "readings": [
-        IndexModel([("ts", DESCENDING)], name="ts_unique", unique=True),
+        IndexModel([("uid", ASCENDING), ("ts", DESCENDING)], name="uid_ts_unique", unique=True),
         IndexModel([("ns_uploaded", ASCENDING), ("ts", DESCENDING)], name="ns_pending"),
         IndexModel([("tp_uploaded", ASCENDING), ("ts", DESCENDING)], name="tp_pending"),
         IndexModel([("source", ASCENDING)], name="source"),
     ],
     "treatments": [IndexModel([("ts", DESCENDING)], name="ts_desc")],
     "emergency_log": [IndexModel([("ts", DESCENDING)], name="ts_desc")],
-    "summaries": [IndexModel([("label", ASCENDING)], name="label", unique=True)],
+    "summaries": [IndexModel([("uid", ASCENDING), ("label", ASCENDING)], name="uid_label", unique=True)],
+    "users": [IndexModel([("username_normalized", ASCENDING)], name="username_unique", unique=True)],
+    "login_attempts": [IndexModel([("expires_at", ASCENDING)], name="ttl", expireAfterSeconds=0)],
 }
 
 UPLOAD_WINDOW = timedelta(hours=24)  # never push more history than this to Nightscout / Tidepool
@@ -47,6 +50,12 @@ HISTORY_DAYS = 90
 
 
 async def ensure_indexes() -> None:
+    # one-time move to per-user data: drop old global indexes and pre-login sample data
+    for coll, name in (("readings", "ts_unique"), ("summaries", "label")):
+        with suppress(Exception):
+            await db[coll].drop_index(name)
+    for coll in ("readings", "treatments", "summaries", "emergency_log"):
+        await db[coll].delete_many({"uid": {"$exists": False}})
     for collection, models in INDEXES.items():
         for model in models:
             try:
@@ -64,22 +73,43 @@ async def health():
     return {"status": "ok"}
 
 
-api = APIRouter(prefix="/api")
+class _UDB:
+    def __getattr__(self, name):
+        return Scoped(db[name])
+
+
+udb = _UDB()
+current_user, auth_register, auth_login = auth_setup(db)
+auth_api = APIRouter(prefix="/api/auth")
+auth_api.post("/register", status_code=201)(auth_register)
+auth_api.post("/login")(auth_login)
+
+
+@auth_api.get("/me")
+async def me(user=Depends(current_user)):
+    return {"id": str(user["_id"]), "username": user["username"]}
+
+
+api = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
 now_utc = lambda: datetime.now(timezone.utc)  # noqa: E731
 
 
 # ---------------- settings & state ----------------
+LEGACY_EM_FIELDS = ("em_sms", "em_call", "em_sms_via", "em_sms_schedule", "em_call_schedule",
+                    "em_sms_repeat_minutes", "em_call_repeat_minutes")
+
+
 async def get_settings() -> AppSettings:
-    doc = await db.settings.find_one({"_id": "main"}, {"_id": 0})
+    doc = await db.settings.find_one({"_id": CURRENT_UID.get()}, {"_id": 0})
     return AppSettings.model_validate(doc or {})
 
 
 async def get_state(key: str) -> dict:
-    return await db.state.find_one({"_id": key}, {"_id": 0}) or {}
+    return await db.state.find_one({"_id": f"{key}:{CURRENT_UID.get()}"}, {"_id": 0}) or {}
 
 
 async def set_state(key: str, values: dict) -> None:
-    await db.state.update_one({"_id": key}, {"$set": values}, upsert=True)
+    await db.state.update_one({"_id": f"{key}:{CURRENT_UID.get()}"}, {"$set": values}, upsert=True)
 
 
 async def insert_readings(items: list[dict], source: str) -> int:
@@ -87,14 +117,14 @@ async def insert_readings(items: list[dict], source: str) -> int:
         return 0
     docs = [Reading(ts=i["ts"], sgv=i["sgv"], direction=i["direction"], source=source).to_mongo() for i in items]
     try:
-        res = await db.readings.insert_many(docs, ordered=False)
+        res = await udb.readings.insert_many(docs, ordered=False)
         return len(res.inserted_ids)
     except BulkWriteError as e:
         return e.details.get("nInserted", 0)
 
 
 async def latest_reading() -> Optional[Reading]:
-    return Reading.from_mongo(await db.readings.find_one({}, sort=[("ts", -1)]))
+    return Reading.from_mongo(await udb.readings.find_one({}, sort=[("ts", -1)]))
 
 
 # ---------------- sync loop ----------------
@@ -125,6 +155,11 @@ async def sync_once(force: bool = False) -> dict:
             await push_nightscout(s)
         except Exception as exc:
             upload_errors["nightscout"] = str(exc)[:300]
+    if s.dx_upload and s.dexcom_username and s.dexcom_password and s.source not in ("dexcom", "demo"):
+        try:
+            await push_dexcom(s)
+        except Exception as exc:
+            upload_errors["dexcom"] = str(exc)[:300]
     if s.tp_upload and s.tp_email and s.tp_password:
         tp_last = sync.get("tp_last")
         if force or not tp_last or now - tp_last >= timedelta(minutes=15):
@@ -142,35 +177,52 @@ async def sync_once(force: bool = False) -> dict:
 async def push_nightscout(s: AppSettings) -> int:
     since = now_utc() - UPLOAD_WINDOW
     readings = [Reading.from_mongo(d) async for d in
-                db.readings.find({"ns_uploaded": False, "ts": {"$gte": since}}).sort("ts", 1).limit(1000)]
+                udb.readings.find({"ns_uploaded": False, "ts": {"$gte": since}}).sort("ts", 1).limit(1000)]
     treatments = [Treatment.from_mongo(d) async for d in
-                  db.treatments.find({"ns_uploaded": False, "ts": {"$gte": since}})]
+                  udb.treatments.find({"ns_uploaded": False, "ts": {"$gte": since}})]
     if not readings and not treatments:
         return 0
     await upload_nightscout(s, readings, treatments)
     from bson import ObjectId
-    await db.readings.update_many({"_id": {"$in": [ObjectId(r.id) for r in readings]}}, {"$set": {"ns_uploaded": True}})
-    await db.treatments.update_many({"_id": {"$in": [ObjectId(t.id) for t in treatments]}}, {"$set": {"ns_uploaded": True}})
+    await udb.readings.update_many({"_id": {"$in": [ObjectId(r.id) for r in readings]}}, {"$set": {"ns_uploaded": True}})
+    await udb.treatments.update_many({"_id": {"$in": [ObjectId(t.id) for t in treatments]}}, {"$set": {"ns_uploaded": True}})
     return len(readings) + len(treatments)
+
+
+async def push_dexcom(s: AppSettings) -> int:
+    since = now_utc() - UPLOAD_WINDOW
+    readings = [Reading.from_mongo(d) async for d in
+                udb.readings.find({"dx_uploaded": {"$ne": True}, "source": {"$ne": "demo"}, "ts": {"$gte": since}}).sort("ts", 1).limit(300)]
+    if not readings:
+        return 0
+    await upload_dexcom_share(s, readings)
+    from bson import ObjectId
+    await udb.readings.update_many({"_id": {"$in": [ObjectId(r.id) for r in readings]}}, {"$set": {"dx_uploaded": True}})
+    return len(readings)
 
 
 async def push_tidepool(s: AppSettings) -> int:
     since = now_utc() - UPLOAD_WINDOW
     readings = [Reading.from_mongo(d) async for d in
-                db.readings.find({"tp_uploaded": False, "ts": {"$gte": since}}).sort("ts", 1).limit(3000)]
+                udb.readings.find({"tp_uploaded": False, "ts": {"$gte": since}}).sort("ts", 1).limit(3000)]
     treatments = [Treatment.from_mongo(d) async for d in
-                  db.treatments.find({"tp_uploaded": False, "ts": {"$gte": since}})]
+                  udb.treatments.find({"tp_uploaded": False, "ts": {"$gte": since}})]
     count = await upload_tidepool(s, readings, treatments)
     from bson import ObjectId
-    await db.readings.update_many({"_id": {"$in": [ObjectId(r.id) for r in readings]}}, {"$set": {"tp_uploaded": True}})
-    await db.treatments.update_many({"_id": {"$in": [ObjectId(t.id) for t in treatments]}}, {"$set": {"tp_uploaded": True}})
+    await udb.readings.update_many({"_id": {"$in": [ObjectId(r.id) for r in readings]}}, {"$set": {"tp_uploaded": True}})
+    await udb.treatments.update_many({"_id": {"$in": [ObjectId(t.id) for t in treatments]}}, {"$set": {"tp_uploaded": True}})
     return count
 
 
 async def sync_loop():
     while True:
         try:
-            await sync_once()
+            async for u in db.users.find({}, {"_id": 1}):
+                CURRENT_UID.set(str(u["_id"]))
+                try:
+                    await sync_once()
+                except Exception as exc:
+                    logger.warning("sync for user %s failed: %s", u["_id"], exc)
         except Exception as exc:
             logger.exception("sync loop error: %s", exc)
         await asyncio.sleep(60)
@@ -233,7 +285,7 @@ async def check_alarms(s: AppSettings) -> None:
                         level = f"custom:{ga.id}"
                         break
     alarm = await get_state("alarm")
-    reset = {"emergency_sent_at": None, "em_sms_sent_at": None, "em_call_sent_at": None}
+    reset = {"emergency_sent_at": None, "em_sent": {}}
     if not level:
         if alarm.get("type"):
             await set_state("alarm", {"type": None, "started_at": None, **reset})
@@ -245,19 +297,27 @@ async def check_alarms(s: AppSettings) -> None:
         await set_state("alarm", alarm)
 
     snoozed = alarm.get("snoozed_until") and alarm["snoozed_until"] > now and alarm.get("snoozed_type") == level
+    with suppress(Exception):
+        await expire_outbox()
     em_match = level in s.em_triggers or (level == "extreme_low" and bool({"urgent_low", "low"} & set(s.em_triggers)))
     if (s.em_enabled and s.source != "demo" and em_match and not snoozed and s.em_contacts
             and now - alarm["started_at"] >= timedelta(minutes=s.em_delay_minutes)):
-        # Resend each channel on its own interval while glucose stays at this level.
-        due = set()
-        for ch in ("sms", "call"):
-            sent = alarm.get(f"em_{ch}_sent_at")
-            if getattr(s, f"em_{ch}") and (not sent or now - sent >= timedelta(minutes=getattr(s, f"em_{ch}_repeat_minutes"))):
-                due.add(ch)
+        # Resend each contact's text and call on that contact's own interval while glucose stays at this level.
+        sent = dict(alarm.get("em_sent") or {})
+        due: dict[str, set] = {}
+        for c in s.em_contacts:
+            for ch in ("sms", "call"):
+                own = getattr(c, ch)
+                last_at = sent.get(f"{c.phone}|{ch}")
+                if own.enabled and (not last_at or now - last_at >= timedelta(minutes=own.repeat_minutes)):
+                    due.setdefault(c.phone, set()).add(ch)
         if due:
-            await set_state("alarm", {"emergency_sent_at": now, **{f"em_{ch}_sent_at": now for ch in due}})
+            for phone, chs in due.items():
+                for ch in chs:
+                    sent[f"{phone}|{ch}"] = now
+            await set_state("alarm", {"emergency_sent_at": now, "em_sent": sent})
             try:
-                await send_emergency(s, last, test=False, channels=due, level=level)
+                await send_emergency(s, last, test=False, due=due, level=level)
             except Exception as exc:
                 logger.error("emergency send failed: %s", getattr(exc, "detail", exc))
 
@@ -288,26 +348,27 @@ async def build_message(s: AppSettings, reading: Optional[Reading], test: bool, 
     return sms, speech
 
 
-def _in_hours(sched, now_local: datetime) -> bool:
-    if sched.mode != "hours":
-        return True
+def _in_window(w, now_local: datetime) -> bool:
     t = now_local.strftime("%H:%M")
-    if sched.start == sched.end:
-        return True
-    if sched.start < sched.end:
-        return sched.start <= t < sched.end
-    return t >= sched.start or t < sched.end  # overnight, e.g. 22:00-07:00
+    today = now_local.weekday()
+    if w.start == w.end:
+        return today in w.days
+    if w.start < w.end:
+        return today in w.days and w.start <= t < w.end
+    # overnight, e.g. Fri 22:00 - Sat 07:00 belongs to the day it starts on
+    return (today in w.days and t >= w.start) or ((today - 1) % 7 in w.days and t < w.end)
+
+
+def _in_hours(sched, now_local: datetime) -> bool:
+    return sched.mode != "hours" or any(_in_window(w, now_local) for w in sched.windows)
 
 
 def channel_active(s: AppSettings, contact, channel: str, now_local: datetime) -> tuple[bool, str]:
-    if not getattr(s, f"em_{channel}"):
-        return False, "off"
     own = getattr(contact, channel)
     if not own.enabled:
         return False, "off for this contact"
-    sched = getattr(s, f"em_{channel}_schedule") if own.mode == "default" else own
-    if not _in_hours(sched, now_local):
-        return False, f"outside {sched.start}-{sched.end}"
+    if not _in_hours(own, now_local):
+        return False, "outside the set hours"
     return True, ""
 
 
@@ -320,39 +381,56 @@ def local_now(s: AppSettings) -> datetime:
 
 
 async def send_emergency(s: AppSettings, reading: Optional[Reading], test: bool,
-                         channels: frozenset | set = frozenset({"sms", "call"}), level: str = "urgent_low") -> list[str]:
-    sid, token, sender = (os.environ.get(k) for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"))
-    if not (sid and token and sender):
-        raise HTTPException(400, "Text and call service is not set up yet (Twilio keys missing).")
+                         due: Optional[dict[str, set]] = None, level: str = "urgent_low") -> list[str]:
+    """due = {contact phone: {"sms", "call"}}; None sends every enabled channel to every contact (test)."""
     if not s.em_contacts:
         raise HTTPException(400, "Add at least one emergency contact first.")
-    from twilio.rest import Client
-    tw = Client(sid, token)
-    sms, speech = await build_message(s, reading, test, level)
+    sid, token, sender = (os.environ.get(k) for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"))
+    wants = {c.phone: (due.get(c.phone, set()) if due is not None else {"sms", "call"}) for c in s.em_contacts}
     now_local = local_now(s)
+    needs_cloud = any((channel_active(s, c, "call", now_local)[0] and "call" in wants[c.phone]) or
+                      (channel_active(s, c, "sms", now_local)[0] and c.sms_via == "cloud" and "sms" in wants[c.phone])
+                      for c in s.em_contacts)
+    tw = None
+    if sid and token and sender:
+        from twilio.rest import Client
+        tw = Client(sid, token)
+    elif needs_cloud and all(c.sms_via == "cloud" for c in s.em_contacts):
+        raise HTTPException(400, "Text and call service is not set up yet (Twilio keys missing).")
+    sms, speech = await build_message(s, reading, test, level)
     results = []
     for c in s.em_contacts:
         sms_on, sms_why = channel_active(s, c, "sms", now_local)
         call_on, call_why = channel_active(s, c, "call", now_local)
-        sms_on, call_on = sms_on and "sms" in channels, call_on and "call" in channels
-        if sms_on:
+        want = wants[c.phone]
+        sms_on, call_on = sms_on and "sms" in want, call_on and "call" in want
+        if sms_on and c.sms_via == "phone":
+            # the user's Android phone picks this up and sends it from its own SIM card
+            await udb.sms_outbox.insert_one({"to": c.phone, "name": c.name, "body": sms, "ts": now_utc(), "status": "pending"})
+            results.append(f"Text to {c.name} handed to your phone")
+        elif sms_on and not tw:
+            results.append(f"Text to {c.name} failed: Twilio keys missing")
+        elif sms_on:
             try:
                 await asyncio.to_thread(tw.messages.create, to=c.phone, from_=sender, body=sms)
                 results.append(f"Text sent to {c.name}")
             except Exception as exc:
                 results.append(f"Text to {c.name} failed: {str(exc)[:120]}")
-        elif s.em_sms and "sms" in channels:
+        elif test and "sms" in want and sms_why != "off for this contact":
             results.append(f"No text to {c.name} ({sms_why})")
-        if call_on:
+        if call_on and not tw:
+            results.append(f"Call to {c.name} failed: Twilio keys missing")
+        elif call_on:
             twiml = f'<Response><Say loop="3">{escape(speech)}</Say></Response>'
             try:
                 await asyncio.to_thread(tw.calls.create, to=c.phone, from_=sender, twiml=twiml)
                 results.append(f"Call placed to {c.name}")
             except Exception as exc:
                 results.append(f"Call to {c.name} failed: {str(exc)[:120]}")
-        elif s.em_call and "call" in channels:
+        elif test and "call" in want and call_why != "off for this contact":
             results.append(f"No call to {c.name} ({call_why})")
-    await db.emergency_log.insert_one(EmergencyLog(ts=now_utc(), test=test, message=sms, results=results).to_mongo())
+    if results:  # real alarms only log what was actually attempted, so overnight resends don't flood the log
+        await udb.emergency_log.insert_one(EmergencyLog(ts=now_utc(), test=test, message=sms, results=results).to_mongo())
     return results
 
 
@@ -385,11 +463,12 @@ async def update_settings(patch: dict):
         raise HTTPException(422, "Thresholds must go: urgent low < low < high < urgent high.")
     if not (40 <= new.target_low < new.target_high <= 400):
         raise HTTPException(422, "Target range: low must be below high.")
-    await db.settings.update_one({"_id": "main"}, {"$set": new.model_dump()}, upsert=True)
+    await db.settings.update_one({"_id": CURRENT_UID.get()},
+                                 {"$set": new.model_dump(), "$unset": {k: "" for k in LEGACY_EM_FIELDS}}, upsert=True)
     if new.source != current.source:
         reset_sessions()
         if current.source == "demo":
-            await db.readings.delete_many({"source": "demo"})
+            await udb.readings.delete_many({"source": "demo"})
         await set_state("sync", {"last_fetch": None, "last_error": None})
         await set_state("alarm", {"type": None, "started_at": None, "emergency_sent_at": None})
     if new.source != current.source or any(patch.get(k) for k in SECRET_FIELDS) or new.ns_url != current.ns_url:
@@ -404,7 +483,7 @@ async def status():
     last = await latest_reading()
     reading, delta = None, None
     if last:
-        prev = Reading.from_mongo(await db.readings.find_one({"ts": {"$lt": last.ts, "$gte": last.ts - timedelta(minutes=16)}},
+        prev = Reading.from_mongo(await udb.readings.find_one({"ts": {"$lt": last.ts, "$gte": last.ts - timedelta(minutes=16)}},
                                                             sort=[("ts", -1)]))
         if prev:
             minutes = max(1.0, (last.ts - prev.ts).total_seconds() / 60)
@@ -436,7 +515,7 @@ async def list_readings(start: datetime, end: Optional[datetime] = None, bucket:
     end = end or now_utc()
     if end - start > timedelta(days=HISTORY_DAYS + 1):
         raise HTTPException(400, "Range too large")
-    cur = db.readings.find({"ts": {"$gte": start, "$lte": end}}, {"_id": 0, "ts": 1, "sgv": 1, "direction": 1}).sort("ts", 1)
+    cur = udb.readings.find({"ts": {"$gte": start, "$lte": end}}, {"_id": 0, "ts": 1, "sgv": 1, "direction": 1}).sort("ts", 1)
     rows = await cur.to_list(None)
     if not bucket:
         return [{"ts": r["ts"], "sgv": r["sgv"], "direction": r.get("direction", "NONE")} for r in rows]
@@ -451,19 +530,19 @@ async def list_readings(start: datetime, end: Optional[datetime] = None, bucket:
 @api.post("/readings")
 async def add_reading(body: ReadingIn):
     ts = (body.ts or now_utc()).astimezone(timezone.utc)
-    prev = await db.readings.find_one({"ts": {"$lt": ts, "$gte": ts - timedelta(minutes=30)}}, sort=[("ts", -1)])
+    prev = await udb.readings.find_one({"ts": {"$lt": ts, "$gte": ts - timedelta(minutes=30)}}, sort=[("ts", -1)])
     direction = "NONE"
     if prev:
         minutes = max(1.0, (ts - prev["ts"]).total_seconds() / 60)
         direction = direction_from_slope((body.sgv - prev["sgv"]) / minutes)
     r = Reading(ts=ts, sgv=body.sgv, direction=direction, source="manual")
     try:
-        res = await db.readings.insert_one(r.to_mongo())
+        res = await udb.readings.insert_one(r.to_mongo())
     except DuplicateKeyError:
         raise HTTPException(409, "A reading already exists at this time.")
     r.id = str(res.inserted_id)
     asyncio.create_task(check_alarms(await get_settings()))
-    return r.model_dump(exclude={"ns_uploaded", "tp_uploaded"})
+    return r.model_dump(exclude={"ns_uploaded", "tp_uploaded", "dx_uploaded"})
 
 
 @api.post("/readings/batch")
@@ -478,7 +557,7 @@ async def add_reading_batch(body: ReadingBatchIn):
 @api.get("/treatments")
 async def list_treatments(start: datetime, end: Optional[datetime] = None):
     end = end or now_utc()
-    docs = await db.treatments.find({"ts": {"$gte": start, "$lte": end}}).sort("ts", -1).to_list(2000)
+    docs = await udb.treatments.find({"ts": {"$gte": start, "$lte": end}}).sort("ts", -1).to_list(2000)
     return [Treatment.from_mongo(d).model_dump(exclude={"ns_uploaded", "tp_uploaded"}) for d in docs]
 
 
@@ -493,7 +572,7 @@ async def add_treatment(body: TreatmentIn):
     t = Treatment(ts=(body.ts or now_utc()).astimezone(timezone.utc), kind=body.kind,
                   insulin=body.insulin if body.kind == "insulin" else None,
                   carbs=body.carbs if body.kind == "carbs" else None, note=(body.note or "").strip() or None)
-    res = await db.treatments.insert_one(t.to_mongo())
+    res = await udb.treatments.insert_one(t.to_mongo())
     t.id = str(res.inserted_id)
     return t.model_dump(exclude={"ns_uploaded", "tp_uploaded"})
 
@@ -506,14 +585,14 @@ async def delete_treatment(tid: str):
         oid = ObjectId(tid)
     except InvalidId:
         raise HTTPException(404, "Not found")
-    res = await db.treatments.delete_one({"_id": oid})
+    res = await udb.treatments.delete_one({"_id": oid})
     if not res.deleted_count:
         raise HTTPException(404, "Not found")
     return {"ok": True}
 
 
 async def compute_stats(start: datetime, end: datetime, s: AppSettings) -> dict:
-    rows = await db.readings.find({"ts": {"$gte": start, "$lte": end}}, {"_id": 0, "sgv": 1}).to_list(None)
+    rows = await udb.readings.find({"ts": {"$gte": start, "$lte": end}}, {"_id": 0, "sgv": 1}).to_list(None)
     vals = [r["sgv"] for r in rows]
     if not vals:
         return {"count": 0}
@@ -598,15 +677,69 @@ async def emergency_test():
     return {"results": results}
 
 
+OUTBOX_MAX_AGE = timedelta(minutes=30)  # older texts are dropped, the alarm will queue a fresh one
+
+
+async def expire_outbox() -> None:
+    """Texts the phone never picked up (off, no app running) are logged as failed so the user can see it."""
+    cutoff = now_utc() - OUTBOX_MAX_AGE
+    async for d in udb.sms_outbox.find({"status": "pending", "ts": {"$lt": cutoff}}):
+        await udb.sms_outbox.update_one({"_id": d["_id"]}, {"$set": {"status": "expired", "done_at": now_utc()}})
+        await udb.emergency_log.insert_one(EmergencyLog(
+            ts=now_utc(), test=d["body"].startswith("TEST"), message=d["body"],
+            results=[f"Text to {d['name']} not sent: your phone didn't pick it up within 30 min (app closed or offline)"]).to_mongo())
+
+
+@api.get("/sms/outbox")
+async def sms_outbox():
+    await expire_outbox()
+    docs = await udb.sms_outbox.find({"status": "pending", "ts": {"$gte": now_utc() - OUTBOX_MAX_AGE}}).sort("ts", 1).to_list(50)
+    return [{"id": str(d["_id"]), "to": d["to"], "name": d["name"], "body": d["body"], "ts": d["ts"]} for d in docs]
+
+
+@api.post("/sms/outbox/{sid}")
+async def sms_outbox_result(sid: str, body: SmsResultIn):
+    from bson import ObjectId
+    from bson.errors import InvalidId
+    try:
+        oid = ObjectId(sid)
+    except InvalidId:
+        raise HTTPException(404, "Not found")
+    doc = await udb.sms_outbox.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    await udb.sms_outbox.update_one({"_id": oid}, {"$set": {"status": "sent" if body.ok else "failed",
+                                                            "error": body.error, "done_at": now_utc()}})
+    text = f"Phone sent text to {doc['name']}" if body.ok else f"Phone text to {doc['name']} failed: {body.error or 'unknown'}"
+    await udb.emergency_log.insert_one(EmergencyLog(ts=now_utc(), test=doc["body"].startswith("TEST"),
+                                                    message=doc["body"], results=[text]).to_mongo())
+    return {"ok": True}
+
+
+@api.post("/dexcom/upload")
+async def dx_upload_now():
+    s = await get_settings()
+    if not (s.dexcom_username and s.dexcom_password):
+        raise HTTPException(400, "Add your Dexcom username and password first.")
+    if s.source == "demo":
+        raise HTTPException(400, "Demo readings are never sent to Dexcom. Switch to your real sensor first.")
+    try:
+        return {"uploaded": await push_dexcom(s)}
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception:
+        raise HTTPException(400, "Could not reach Dexcom Share.")
+
+
 @api.get("/emergency/log")
 async def emergency_log():
-    docs = await db.emergency_log.find().sort("ts", -1).limit(20).to_list(20)
+    docs = await udb.emergency_log.find().sort("ts", -1).limit(20).to_list(20)
     return [EmergencyLog.from_mongo(d).model_dump() for d in docs]
 
 
 @api.get("/ai/summary")
 async def get_summary(label: str):
-    doc = await db.summaries.find_one({"label": label}, {"_id": 0})
+    doc = await udb.summaries.find_one({"label": label}, {"_id": 0})
     return doc or {"label": label, "text": None}
 
 
@@ -617,12 +750,12 @@ async def ai_summary(body: SummaryIn):
     st = await compute_stats(body.start, body.end, s)
     if not st.get("count"):
         raise HTTPException(400, "No glucose readings for this day yet.")
-    rows = await db.readings.find({"ts": {"$gte": body.start, "$lte": body.end}}, {"_id": 0, "ts": 1, "sgv": 1}).to_list(None)
+    rows = await udb.readings.find({"ts": {"$gte": body.start, "$lte": body.end}}, {"_id": 0, "ts": 1, "sgv": 1}).to_list(None)
     hourly: dict[int, list[int]] = {}
     for r in rows:
         hourly.setdefault(int((r["ts"] - body.start).total_seconds() // 3600), []).append(r["sgv"])
     hours = ", ".join(f"h{h}:{round(sum(v) / len(v))}" for h, v in sorted(hourly.items()))
-    tdocs = await db.treatments.find({"ts": {"$gte": body.start, "$lte": body.end}}).sort("ts", 1).to_list(200)
+    tdocs = await udb.treatments.find({"ts": {"$gte": body.start, "$lte": body.end}}).sort("ts", 1).to_list(200)
     treats = "; ".join(f"+{int((d['ts'] - body.start).total_seconds() // 60)}min {d['kind']} "
                        f"{d.get('insulin') or d.get('carbs') or ''} {d.get('note') or ''}".strip() for d in tdocs) or "none"
     unit = "mmol/L" if s.unit == "mmol" else "mg/dL"
@@ -637,7 +770,10 @@ async def ai_summary(body: SummaryIn):
                                    "their care team if something looks concerning.")
                    ).with_model("anthropic", "claude-sonnet-5-5")
 
+    uid = CURRENT_UID.get()
+
     async def gen():
+        CURRENT_UID.set(uid)
         text = ""
         try:
             async for ev in chat.stream_message(UserMessage(text=prompt)):
@@ -646,7 +782,7 @@ async def ai_summary(body: SummaryIn):
                     yield f"data: {json.dumps({'delta': ev.content})}\n\n"
                 elif isinstance(ev, StreamDone):
                     break
-            await db.summaries.update_one({"label": body.label},
+            await udb.summaries.update_one({"label": body.label},
                                           {"$set": {"label": body.label, "text": text, "created_at": now_utc()}},
                                           upsert=True)
             yield f"data: {json.dumps({'done': True})}\n\n"
@@ -658,6 +794,7 @@ async def ai_summary(body: SummaryIn):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+app.include_router(auth_api)
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 

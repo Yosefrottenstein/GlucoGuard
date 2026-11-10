@@ -34,6 +34,12 @@ BASE_URL = _base_url()
 def api():
     s = requests.Session()
     s.headers["Content-Type"] = "application/json"
+    # Ensure demo_user exists (idempotent) and attach bearer token for all requests
+    creds = {"username": "demo_user", "password": "demo12345"}
+    s.post(f"{BASE_URL}/api/auth/register", json=creds)  # 201 or 409
+    lr = s.post(f"{BASE_URL}/api/auth/login", json=creds)
+    assert lr.status_code == 200, f"demo_user login failed: {lr.text}"
+    s.headers["Authorization"] = f"Bearer {lr.json()['access_token']}"
     return s
 
 
@@ -142,27 +148,26 @@ class TestEmergencyV2:
     def test_contact_with_sms_and_call_schedules_persists(self, api):
         patch = {
             "em_enabled": True,
-            "em_sms": True, "em_call": True,
-            "em_sms_schedule": {"enabled": True, "mode": "always", "start": "00:00", "end": "00:00"},
-            "em_call_schedule": {"enabled": True, "mode": "hours", "start": "00:00", "end": "07:00"},
             "em_triggers": ["urgent_low", "urgent_high"],
-            "em_sms_repeat_minutes": 7,
-            "em_call_repeat_minutes": 11,
             "tz": "America/Los_Angeles",
             "em_contacts": [{
                 "name": "TEST_cv2", "phone": "+15551234567",
-                "sms": {"enabled": True, "mode": "always", "start": "00:00", "end": "00:00"},
-                "call": {"enabled": True, "mode": "hours", "start": "22:00", "end": "07:00"},
+                "sms": {"enabled": True, "mode": "always", "start": "00:00", "end": "00:00", "repeat_minutes": 7},
+                "call": {"enabled": True, "mode": "hours", "start": "22:00", "end": "07:00", "repeat_minutes": 11},
             }],
         }
         r = api.put(f"{BASE_URL}/api/settings", json=patch)
         assert r.status_code == 200, r.text
         data = r.json()
-        assert data["em_sms_repeat_minutes"] == 7
-        assert data["em_call_repeat_minutes"] == 11
+        # iter5: repeat interval lives on each contact channel
+        assert data["em_contacts"][0]["sms"]["repeat_minutes"] == 7
+        assert data["em_contacts"][0]["call"]["repeat_minutes"] == 11
+        assert "em_sms_repeat_minutes" not in data
         assert data["em_triggers"] == ["urgent_low", "urgent_high"]
         assert data["em_contacts"][0]["phone"] == "+15551234567"
-        assert data["em_contacts"][0]["call"]["start"] == "22:00"
+        # iter4: old {start,end} auto-migrates to windows on all days
+        assert data["em_contacts"][0]["call"]["windows"][0]["start"] == "22:00"
+        assert data["em_contacts"][0]["call"]["windows"][0]["days"] == [0, 1, 2, 3, 4, 5, 6]
         assert data["em_contacts"][0]["sms"]["mode"] == "always"
 
     def test_invalid_phone_422(self, api):
@@ -251,8 +256,6 @@ class TestZZRestore:
             "em_contacts": [],
             "em_enabled": False,
             "em_triggers": ["urgent_low"],
-            "em_sms_repeat_minutes": 5,
-            "em_call_repeat_minutes": 5,
             "tz": "UTC",
             "glucose_alarms": [],
             "reminders": [],

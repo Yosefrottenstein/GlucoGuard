@@ -1,0 +1,56 @@
+{
+  "summary": "Iteration 5: per-contact SMS/call settings. Backend 91/91 pytest pass, including the new test_iter5_per_contact.py (12 tests) and the iter4/iter2 tests, which I moved to the per-contact format. Covered: legacy keys gone from settings; two contacts saved separately; repeat_minutes kept between 1 and 720; an old saved document is converted (global hours/repeat/on-off copied into each contact, 'default' replaced) and the old keys are $unset in Mongo after PUT; emergency test lines per contact (handed to phone + outbox entry, disabled channel gives no line, outside hours, Twilio keys missing, 400 when every contact is cloud); outbox expiry plus its log line; check_alarms resends per contact and channel on each contact's own repeat_minutes (em_sent keys checked in Mongo); Dexcom upload refuses demo readings. Frontend (390x844 web): the Emergency section has only the expected controls and no global Text/Call cards. In the contact sheet I tested the SMS/call toggles (call is off by default), the Any time / Only at set hours chips, Weekdays preset, From hour grid, add/remove time window, day circles and repeat inputs. Two contacts kept their own settings after Save and reload; rows read 'Text: any time, every 5 min' and 'Call: Weekdays 22:00–07:00, every 10 min'. Editing one contact did not change the other. The test button shows a Twilio toast when every contact uses the cloud. Regressions pass: Nightscout/Tidepool/Dexcom Share are toggle-first and /sensor back goes to /settings. No deprecated Expo packages and no SafeAreaView-from-react-native issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/settings (em_contacts)", "issue": "No check for duplicate phone numbers. send_emergency's wants map and the alarm.em_sent '<phone>|sms' keys are keyed by phone, so two contacts with the same number share resend timers (the shorter repeat wins for both)."},
+      {"endpoint": "POST /api/emergency/test", "issue": "needs_cloud ignores the contact's hours. All-cloud contacts whose channels are all outside their set hours still get 400 'Twilio keys missing' when nothing would actually be sent. It also returns 400 if any channel needs cloud and all contacts are sms_via=cloud, even when some contacts need nothing."},
+      {"endpoint": "check_alarms", "issue": "A channel outside its hours is still marked in em_sent and logs 'No text/call to X (outside the set hours)' every repeat interval. This can fill the emergency log overnight."},
+      {"endpoint": "PUT /api/settings source change", "issue": "The alarm state reset on source change sets emergency_sent_at but not em_sent. Harmless, because em_sent is reset when the alarm type changes."},
+      {"endpoint": "AppSettings._contacts_own_channels", "issue": "Migration only runs if 'em_sms_schedule' is in the document. Very old docs with only em_sms/em_call/em_sms_via and no em_sms_schedule are not converted. em_call=false would be lost and contacts would fall back to the default call setting."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ContactSheet / ScheduleEditor", "issues": [
+        "The Every day / Weekdays / Weekend preset links have a 16px-tall touch target (hitSlop 6 brings it to about 28px), below 44px. testID contact-*-schedule-window-N-preset-*. Reference: src/components/ScheduleEditor.tsx:132",
+        "The sheet slides in for about 1s; tapping during the animation hits elements still off screen (test-only, needs a wait)."
+      ]},
+      {"screen": "Settings > Contacts row", "issues": ["Long schedule text wraps in the middle of the time range ('22:00–' then '07:00'). Consider shortening day lists (e.g. 'Mon–Sat') or using a non-breaking range."]},
+      {"screen": "Settings > Emergency", "issues": ["Saving a contact needs a second Save in the header (there is a toast). The settings tab has no unsaved-changes guard if the user leaves."]}
+    ],
+    "react_native_issues": [
+      {"component": "sensor router.back", "issue": "The Pair success handler and 'Switch to LibreLinkUp' call router.back() without the canGoBack() fallback used by the header back button. When /sensor is opened directly these do nothing. Reference: /app/frontend/app/sensor.tsx:94 and :147"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter5_per_contact.py",
+    "/app/backend/tests/test_iter4_schedules_sms_dexcom.py",
+    "/app/backend/tests/test_xdrip_iter2.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: reject duplicate contact phone numbers in PUT /api/settings (422), or key em_sent/wants by contact index.",
+    "Optional: in send_emergency, count needs_cloud only for channels that are inside their hours, and only for contacts that actually need Twilio.",
+    "Optional: don't log 'outside the set hours' lines from check_alarms on every repeat (log once per alarm episode).",
+    "Optional: extend the legacy migration trigger to any of em_sms/em_call/em_sms_via/em_*_repeat_minutes, not only em_sms_schedule.",
+    "Make the ScheduleEditor preset links at least 44px tall.",
+    "Use the canGoBack() ? back() : replace('/settings') fallback in sensor.tsx:94 and :147."
+  ],
+  "critical_code_review_comments": [
+    "settings.tsx is 748 lines (more than 700); consider splitting more sections like EmergencySection.",
+    "In ContactSheet, minutes() caps at 720 but lets 0 through while typing. save() blocks values below 1, which is fine."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter5_per_contact.py (new)",
+    "/app/backend/tests/test_iter4_schedules_sms_dexcom.py (moved to per-contact format; dexcom fake-creds test now expects the demo guard)",
+    "/app/backend/tests/test_xdrip_iter2.py (removed global em_* keys; repeat_minutes per contact)"
+  ],
+  "success_rate": {"backend": "100% (91/91)", "frontend": "100% of tested flows"},
+  "seed_data_creation": "Throwaway TEST_it4_*/TEST_it5*_ users created by pytest (no user delete endpoint, left in DB). demo_user contacts TEST_Mum/TEST_Dad were added through the UI and then reset to em_contacts=[] at the end. demo_user's older emergency_log test lines (Mom/Dad) were already there.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend tests write to Mongo directly (pymongo with MONGO_URL/DB_NAME from backend/.env) for legacy migration, outbox expiry and em_sent aging. Settings _id = user id string; scoped collections carry a uid field; alarm state _id = 'alarm:<uid>'. On web the sms_via chooser is hidden (Android only), so web-created contacts are cloud and the test button returns 400 with no Twilio keys (a toast is shown). Wait about 1.2s after opening ContactSheet before tapping, because of the slide animation."
+}
