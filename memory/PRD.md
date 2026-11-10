@@ -25,3 +25,7 @@ tap a dot on the chart to see value + time, compatible with as many sensors as p
 - P1: Alarm sounds + local notifications when app is in background (native build)
 - P1: Direct Bluetooth sensor connection (native build only; proprietary protocols)
 - P2: Apple Health sync, home-screen widget, calibration entries, app passcode lock
+- Emergency messages v2: separate SMS / call toggles, default hours per channel (Always / Night 00-07 / Custom),
+  per-contact editor (nickname, phone, pick from phone contacts, SMS + call each on/off with Default/Always/custom hours),
+  separate resend interval in minutes for SMS and calls while glucose stays at the same alarm level,
+  triggers selectable: urgent low / low / high / urgent high. Server uses user's time zone (tz saved from phone).

@@ -210,31 +210,38 @@ async def check_alarms(s: AppSettings) -> None:
             if level and not getattr(s, f"alarm_{level}"):
                 level = None
     alarm = await get_state("alarm")
+    reset = {"emergency_sent_at": None, "em_sms_sent_at": None, "em_call_sent_at": None}
     if not level:
         if alarm.get("type"):
-            await db.state.update_one({"_id": "alarm"}, {"$set": {"type": None, "started_at": None,
-                                                                 "emergency_sent_at": None}}, upsert=True)
+            await set_state("alarm", {"type": None, "started_at": None, **reset})
         return
     if alarm.get("type") != level:
-        alarm = {"type": level, "started_at": now, "emergency_sent_at": None,
+        alarm = {"type": level, "started_at": now, **reset,
                  "snoozed_until": alarm.get("snoozed_until") if alarm.get("snoozed_type") == level else None,
                  "snoozed_type": alarm.get("snoozed_type")}
         await set_state("alarm", alarm)
 
     snoozed = alarm.get("snoozed_until") and alarm["snoozed_until"] > now and alarm.get("snoozed_type") == level
-    triggers = ["urgent_low"] if s.em_trigger == "urgent_low" else ["urgent_low", "low"]
-    if (s.em_enabled and s.source != "demo" and level in triggers and not snoozed and s.em_contacts
+    if (s.em_enabled and s.source != "demo" and level in s.em_triggers and not snoozed and s.em_contacts
             and now - alarm["started_at"] >= timedelta(minutes=s.em_delay_minutes)):
-        sent = alarm.get("emergency_sent_at")
-        if not sent or now - sent >= timedelta(minutes=s.em_repeat_minutes):
-            await set_state("alarm", {"emergency_sent_at": now})
+        # Resend each channel on its own interval while glucose stays at this level.
+        due = set()
+        for ch in ("sms", "call"):
+            sent = alarm.get(f"em_{ch}_sent_at")
+            if getattr(s, f"em_{ch}") and (not sent or now - sent >= timedelta(minutes=getattr(s, f"em_{ch}_repeat_minutes"))):
+                due.add(ch)
+        if due:
+            await set_state("alarm", {"emergency_sent_at": now, **{f"em_{ch}_sent_at": now for ch in due}})
             try:
-                await send_emergency(s, last, test=False)
+                await send_emergency(s, last, test=False, channels=due, level=level)
             except Exception as exc:
-                logger.error("emergency send failed: %s", exc)
+                logger.error("emergency send failed: %s", getattr(exc, "detail", exc))
 
 
-async def build_message(s: AppSettings, reading: Optional[Reading], test: bool) -> tuple[str, str]:
+LEVEL_WORDS = {"urgent_low": "very low", "low": "low", "high": "high", "urgent_high": "very high"}
+
+
+async def build_message(s: AppSettings, reading: Optional[Reading], test: bool, level: str) -> tuple[str, str]:
     who = s.em_name or "Your contact"
     if reading:
         val = fmt_value(reading.sgv, s)
@@ -250,13 +257,46 @@ async def build_message(s: AppSettings, reading: Optional[Reading], test: bool) 
             age = int((now_utc() - loc["ts"]).total_seconds() // 60)
             loc_text = f" Location ({age} min ago): https://maps.google.com/?q={loc['lat']:.5f},{loc['lon']:.5f}"
     prefix = "TEST - " if test else "EMERGENCY: "
-    sms = f"{prefix}{who}'s {glucose} and the low alarm was not acknowledged.{loc_text}"
+    word = LEVEL_WORDS.get(level, "glucose")
+    sms = f"{prefix}{who}'s {glucose}. The {word} glucose alarm was not acknowledged.{loc_text}"
     speech = (f"{'This is a test. ' if test else 'Emergency alert. '}{who}'s {glucose}. "
-              "The low glucose alarm was not acknowledged. Please check on them now. A text with their location has been sent.")
+              f"The {word} glucose alarm was not acknowledged. Please check on them now.")
     return sms, speech
 
 
-async def send_emergency(s: AppSettings, reading: Optional[Reading], test: bool) -> list[str]:
+def _in_hours(sched, now_local: datetime) -> bool:
+    if sched.mode != "hours":
+        return True
+    t = now_local.strftime("%H:%M")
+    if sched.start == sched.end:
+        return True
+    if sched.start < sched.end:
+        return sched.start <= t < sched.end
+    return t >= sched.start or t < sched.end  # overnight, e.g. 22:00-07:00
+
+
+def channel_active(s: AppSettings, contact, channel: str, now_local: datetime) -> tuple[bool, str]:
+    if not getattr(s, f"em_{channel}"):
+        return False, "off"
+    own = getattr(contact, channel)
+    if not own.enabled:
+        return False, "off for this contact"
+    sched = getattr(s, f"em_{channel}_schedule") if own.mode == "default" else own
+    if not _in_hours(sched, now_local):
+        return False, f"outside {sched.start}-{sched.end}"
+    return True, ""
+
+
+def local_now(s: AppSettings) -> datetime:
+    from zoneinfo import ZoneInfo
+    try:
+        return now_utc().astimezone(ZoneInfo(s.tz))
+    except Exception:
+        return now_utc()
+
+
+async def send_emergency(s: AppSettings, reading: Optional[Reading], test: bool,
+                         channels: frozenset | set = frozenset({"sms", "call"}), level: str = "urgent_low") -> list[str]:
     sid, token, sender = (os.environ.get(k) for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"))
     if not (sid and token and sender):
         raise HTTPException(400, "Text and call service is not set up yet (Twilio keys missing).")
@@ -264,22 +304,30 @@ async def send_emergency(s: AppSettings, reading: Optional[Reading], test: bool)
         raise HTTPException(400, "Add at least one emergency contact first.")
     from twilio.rest import Client
     tw = Client(sid, token)
-    sms, speech = await build_message(s, reading, test)
+    sms, speech = await build_message(s, reading, test, level)
+    now_local = local_now(s)
     results = []
     for c in s.em_contacts:
-        if s.em_sms:
+        sms_on, sms_why = channel_active(s, c, "sms", now_local)
+        call_on, call_why = channel_active(s, c, "call", now_local)
+        sms_on, call_on = sms_on and "sms" in channels, call_on and "call" in channels
+        if sms_on:
             try:
                 await asyncio.to_thread(tw.messages.create, to=c.phone, from_=sender, body=sms)
                 results.append(f"Text sent to {c.name}")
             except Exception as exc:
                 results.append(f"Text to {c.name} failed: {str(exc)[:120]}")
-        if s.em_call:
+        elif s.em_sms and "sms" in channels:
+            results.append(f"No text to {c.name} ({sms_why})")
+        if call_on:
             twiml = f'<Response><Say loop="3">{escape(speech)}</Say></Response>'
             try:
                 await asyncio.to_thread(tw.calls.create, to=c.phone, from_=sender, twiml=twiml)
                 results.append(f"Call placed to {c.name}")
             except Exception as exc:
                 results.append(f"Call to {c.name} failed: {str(exc)[:120]}")
+        elif s.em_call and "call" in channels:
+            results.append(f"No call to {c.name} ({call_why})")
     await db.emergency_log.insert_one(EmergencyLog(ts=now_utc(), test=test, message=sms, results=results).to_mongo())
     return results
 

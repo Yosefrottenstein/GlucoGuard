@@ -50,9 +50,22 @@ class EmergencyLog(BaseDocument):
     results: list[str]
 
 
+HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class ChannelSchedule(BaseModel):
+    enabled: bool = True
+    # "default" (contacts only) follows the global hours for this channel
+    mode: Literal["default", "always", "hours"] = "default"
+    start: str = Field(default="00:00", pattern=HHMM)
+    end: str = Field(default="06:00", pattern=HHMM)
+
+
 class Contact(BaseModel):
-    name: str
-    phone: str
+    name: str = Field(min_length=1, max_length=60)
+    phone: str = Field(pattern=r"^\+\d{7,15}$")
+    sms: ChannelSchedule = ChannelSchedule()
+    call: ChannelSchedule = ChannelSchedule()
 
 
 SECRET_FIELDS = ("ns_secret", "dexcom_password", "libre_password", "tp_password")
@@ -100,9 +113,13 @@ class AppSettings(BaseModel):
     em_contacts: list[Contact] = []
     em_sms: bool = True
     em_call: bool = False
-    em_trigger: Literal["urgent_low", "low"] = "urgent_low"
-    em_delay_minutes: int = 15
-    em_repeat_minutes: int = 30
+    em_sms_schedule: ChannelSchedule = ChannelSchedule(mode="always")
+    em_call_schedule: ChannelSchedule = ChannelSchedule(mode="hours", start="00:00", end="07:00")
+    tz: str = "UTC"
+    em_triggers: list[Literal["urgent_low", "low", "high", "urgent_high"]] = ["urgent_low"]
+    em_delay_minutes: int = Field(default=15, ge=0, le=240)
+    em_sms_repeat_minutes: int = Field(default=5, ge=1, le=720)
+    em_call_repeat_minutes: int = Field(default=5, ge=1, le=720)
     em_location: bool = True
 
     def public(self) -> dict:

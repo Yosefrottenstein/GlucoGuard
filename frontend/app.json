@@ -12,7 +12,8 @@
       "bundleIdentifier": "com.emergent.iphoneappguide.chhlza",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Send your location to emergency contacts during lows",
-        "NSBluetoothAlwaysUsageDescription": "Connect to your glucose sensor for live readings"
+        "NSBluetoothAlwaysUsageDescription": "Connect to your glucose sensor for live readings",
+        "NSContactsUsageDescription": "Pick emergency contacts from your address book"
       }
     },
     "android": {
@@ -64,6 +65,12 @@
             "central"
           ],
           "bluetoothAlwaysPermission": "Connect to your glucose sensor for live readings"
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Pick emergency contacts from your address book"
         }
       ]
     ],

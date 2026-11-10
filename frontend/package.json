@@ -21,6 +21,7 @@
     "expo": "58.0.17",
     "expo-blur": "58.0.5",
     "expo-constants": "58.0.13",
+    "expo-contacts": "~58.0.10",
     "expo-font": "58.0.9",
     "expo-haptics": "58.0.7",
     "expo-image": "58.0.16",

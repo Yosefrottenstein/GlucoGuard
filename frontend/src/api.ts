@@ -51,7 +51,8 @@ export type Stats = {
   tir?: { very_low: number; low: number; in_range: number; high: number; very_high: number };
 };
 
-export type Contact = { name: string; phone: string };
+export type ChannelSchedule = { enabled: boolean; mode: "default" | "always" | "hours"; start: string; end: string };
+export type Contact = { name: string; phone: string; sms: ChannelSchedule; call: ChannelSchedule };
 
 export type Settings = Thresholds & {
   unit: Unit;
@@ -88,9 +89,13 @@ export type Settings = Thresholds & {
   em_contacts: Contact[];
   em_sms: boolean;
   em_call: boolean;
-  em_trigger: "urgent_low" | "low";
+  em_sms_schedule: ChannelSchedule;
+  em_call_schedule: ChannelSchedule;
+  tz: string;
+  em_triggers: ("urgent_low" | "low" | "high" | "urgent_high")[];
   em_delay_minutes: number;
-  em_repeat_minutes: number;
+  em_sms_repeat_minutes: number;
+  em_call_repeat_minutes: number;
   em_location: boolean;
 };
 

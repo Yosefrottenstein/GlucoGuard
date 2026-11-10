@@ -40,6 +40,40 @@ export function ChipRow<T extends string>({ options, value, onChange, testIDPref
   );
 }
 
+export function MultiChipRow<T extends string>({
+  options,
+  values,
+  onChange,
+  testIDPrefix,
+}: {
+  options: { value: T; label: string }[];
+  values: T[];
+  onChange: (v: T[]) => void;
+  testIDPrefix: string;
+}) {
+  const styles = useStyles();
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.row} contentContainerStyle={styles.content}>
+      {options.map((o) => {
+        const active = values.includes(o.value);
+        return (
+          <Pressable
+            key={o.value}
+            testID={`${testIDPrefix}-${o.value}`}
+            onPress={() => {
+              Haptics.selectionAsync();
+              onChange(active ? values.filter((v) => v !== o.value) : [...values, o.value]);
+            }}
+            style={({ pressed }) => [styles.chip, active && styles.active, pressed && { opacity: 0.7 }]}
+          >
+            <Text style={[styles.label, active && styles.activeLabel]}>{o.label}</Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
 const useStyles = makeStyles((c) => ({
   row: { flexGrow: 0, height: 56 },
   content: { gap: spacing.sm, alignItems: "center" },

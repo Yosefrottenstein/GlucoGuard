@@ -7,9 +7,11 @@ import { ActivityIndicator, Linking, Modal, Pressable, Text, TextInput, View } f
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api, SensorType, Settings, Source, Status, Unit } from "@/src/api";
+import { api, ChannelSchedule, SensorType, Settings, Source, Status, Unit } from "@/src/api";
 import { SENSORS } from "@/src/ble";
-import { ChipRow } from "@/src/components/ChipRow";
+import { ChipRow, MultiChipRow } from "@/src/components/ChipRow";
+import { ContactSheet } from "@/src/components/ContactSheet";
+import { describeSchedule, ScheduleEditor, validTime } from "@/src/components/ScheduleEditor";
 import { useToast } from "@/src/components/Toast";
 import { Button, Card, Field, Hint, SectionTitle, ToggleRow } from "@/src/components/ui";
 import { agoText, fromDisplay, toDisplay, unitLabel } from "@/src/glucose";
@@ -60,8 +62,7 @@ export default function SettingsScreen() {
   const [thr, setThr] = useState<Record<ThrKey, string>>({ urgent_low: "", low: "", high: "", urgent_high: "" });
   const [secrets, setSecrets] = useState(EMPTY_SECRETS);
   const [dirty, setDirty] = useState(false);
-  const [contactName, setContactName] = useState("");
-  const [contactPhone, setContactPhone] = useState("");
+  const [editing, setEditing] = useState<number | null>(null); // -1 = new contact
   const [permSheet, setPermSheet] = useState<null | "ask" | "settings">(null);
 
   useEffect(() => {
@@ -100,6 +101,11 @@ export default function SettingsScreen() {
       patch[k] = secrets[k];
       delete patch[`${k}_set`];
     });
+    for (const s of [draft.em_sms_schedule, draft.em_call_schedule]) {
+      if (s.mode === "hours" && !(validTime(s.start) && validTime(s.end))) throw new Error("Enter hours as HH:MM, e.g. 22:00");
+    }
+    if (draft.em_sms_repeat_minutes < 1 || draft.em_call_repeat_minutes < 1) throw new Error("Resend time must be at least 1 minute.");
+    patch.tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
     return patch;
   };
 
@@ -146,15 +152,8 @@ export default function SettingsScreen() {
     } else setPermSheet("settings");
   };
 
-  const addContact = () => {
-    const phone = contactPhone.replace(/[\s()-]/g, "");
-    if (!contactName.trim()) return toast("Enter the contact's name", "error");
-    if (!/^\+\d{7,15}$/.test(phone)) return toast("Phone must start with + and country code, e.g. +15551234567", "error");
-    if (!draft) return;
-    set("em_contacts", [...draft.em_contacts, { name: contactName.trim(), phone }]);
-    setContactName("");
-    setContactPhone("");
-  };
+  const channelText = (own: ChannelSchedule, enabledGlobally: boolean, def: ChannelSchedule) =>
+    !enabledGlobally || !own.enabled ? "off" : describeSchedule(own.mode === "default" ? def : own);
 
   if (!draft) {
     return (
@@ -357,7 +356,7 @@ export default function SettingsScreen() {
         <Card style={{ paddingVertical: spacing.xs }}>
           <ToggleRow
             label="Emergency messages"
-            sub="Alert contacts when a low alarm is not snoozed in time"
+            sub="Alert contacts when an alarm isn't snoozed in time"
             value={draft.em_enabled}
             onChange={(v) => {
               set("em_enabled", v);
@@ -366,8 +365,6 @@ export default function SettingsScreen() {
             testID="emergency-enabled-toggle"
           />
           <Field label="Your name" value={draft.em_name} onChangeText={(v) => set("em_name", v)} placeholder="Used in the message" autoCapitalize="words" testID="emergency-name-input" />
-          <ToggleRow label="Send text message" value={draft.em_sms} onChange={(v) => set("em_sms", v)} testID="emergency-sms-toggle" />
-          <ToggleRow label="Make phone call" sub="A voice reads the alert aloud" value={draft.em_call} onChange={(v) => set("em_call", v)} testID="emergency-call-toggle" />
           <ToggleRow
             label="Include my location"
             sub="Adds a map link to the text"
@@ -379,45 +376,77 @@ export default function SettingsScreen() {
             testID="emergency-location-toggle"
           />
           <View style={[styles.inlineChips, styles.bottomBorder]}>
-            <Text style={styles.inlineLabel}>Send when</Text>
-            <ChipRow
+            <Text style={styles.inlineLabel}>Send for these alarms</Text>
+            <MultiChipRow
               options={[
                 { value: "urgent_low", label: "Urgent low" },
-                { value: "low", label: "Any low" },
+                { value: "low", label: "Low" },
+                { value: "high", label: "High" },
+                { value: "urgent_high", label: "Urgent high" },
               ]}
-              value={draft.em_trigger}
-              onChange={(v) => set("em_trigger", v)}
+              values={draft.em_triggers}
+              onChange={(v) => set("em_triggers", v)}
               testIDPrefix="emergency-trigger"
-              padded={false}
             />
           </View>
-          <Field label="Wait before" value={String(draft.em_delay_minutes)} onChangeText={(v) => setNum("em_delay_minutes", v)} keyboardType="number-pad" suffix="min" testID="emergency-delay-input" />
-          <Field label="Repeat every" last value={String(draft.em_repeat_minutes)} onChangeText={(v) => setNum("em_repeat_minutes", v)} keyboardType="number-pad" suffix="min" testID="emergency-repeat-input" />
+          <Field label="Wait before" last value={String(draft.em_delay_minutes)} onChangeText={(v) => setNum("em_delay_minutes", v)} keyboardType="number-pad" suffix="min" testID="emergency-delay-input" />
         </Card>
+
+        <Text style={styles.subTitle}>Text messages (SMS)</Text>
+        <Card style={{ paddingVertical: spacing.xs }}>
+          <ToggleRow label="Send text messages" value={draft.em_sms} onChange={(v) => set("em_sms", v)} testID="emergency-sms-toggle" last={!draft.em_sms} />
+          {draft.em_sms && (
+            <>
+              <Field label="Resend every" value={String(draft.em_sms_repeat_minutes)} onChangeText={(v) => setNum("em_sms_repeat_minutes", v)} keyboardType="number-pad" suffix="min" testID="emergency-sms-repeat-input" />
+              <View style={styles.inlineChips}>
+                <Text style={styles.inlineLabel}>Default hours for texts</Text>
+                <ScheduleEditor value={draft.em_sms_schedule} onChange={(v) => set("em_sms_schedule", v)} testIDPrefix="emergency-sms-schedule" />
+              </View>
+            </>
+          )}
+        </Card>
+
+        <Text style={styles.subTitle}>Voice calls</Text>
+        <Card style={{ paddingVertical: spacing.xs }}>
+          <ToggleRow label="Make phone calls" sub="A voice reads the alert aloud" value={draft.em_call} onChange={(v) => set("em_call", v)} testID="emergency-call-toggle" last={!draft.em_call} />
+          {draft.em_call && (
+            <>
+              <Field label="Call again every" value={String(draft.em_call_repeat_minutes)} onChangeText={(v) => setNum("em_call_repeat_minutes", v)} keyboardType="number-pad" suffix="min" testID="emergency-call-repeat-input" />
+              <View style={styles.inlineChips}>
+                <Text style={styles.inlineLabel}>Default hours for calls</Text>
+                <ScheduleEditor value={draft.em_call_schedule} onChange={(v) => set("em_call_schedule", v)} testIDPrefix="emergency-call-schedule" />
+              </View>
+            </>
+          )}
+        </Card>
+        <Hint>
+          While glucose stays at the same alarm level, texts and calls repeat at these intervals until you snooze. If the level changes (for
+          example low to urgent low), it starts over.
+        </Hint>
 
         <Text style={styles.subTitle}>Contacts</Text>
         <Card style={{ paddingVertical: spacing.xs }}>
+          {draft.em_contacts.length === 0 && <Text style={[styles.radioSub, { paddingVertical: spacing.md }]}>No contacts yet.</Text>}
           {draft.em_contacts.map((c, i) => (
-            <View key={`${c.phone}-${i}`} style={[styles.contactRow, styles.bottomBorder]} testID={`emergency-contact-${i}`}>
+            <Pressable
+              key={`${c.phone}-${i}`}
+              onPress={() => setEditing(i)}
+              style={[styles.contactRow, i < draft.em_contacts.length - 1 && styles.bottomBorder]}
+              testID={`emergency-contact-${i}`}
+            >
               <Ionicons name="person-circle" size={28} color={colors.muted} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.radioTitle}>{c.name}</Text>
-                <Text style={styles.radioSub}>{c.phone}</Text>
+                <Text style={styles.radioSub}>
+                  {c.phone} · Text {channelText(c.sms, draft.em_sms, draft.em_sms_schedule)} · Call{" "}
+                  {channelText(c.call, draft.em_call, draft.em_call_schedule)}
+                </Text>
               </View>
-              <Pressable
-                testID={`emergency-contact-remove-${i}`}
-                hitSlop={8}
-                onPress={() => set("em_contacts", draft.em_contacts.filter((_, j) => j !== i))}
-                style={styles.iconBtn}
-              >
-                <Ionicons name="close-circle" size={22} color={colors.error} />
-              </Pressable>
-            </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+            </Pressable>
           ))}
-          <Field label="Name" value={contactName} onChangeText={setContactName} placeholder="e.g. Mom" autoCapitalize="words" testID="emergency-contact-name-input" />
-          <Field label="Phone" value={contactPhone} onChangeText={setContactPhone} placeholder="+15551234567" keyboardType="phone-pad" testID="emergency-contact-phone-input" last />
         </Card>
-        <Button title="Add contact" kind="secondary" onPress={addContact} testID="emergency-add-contact-button" style={{ marginTop: spacing.sm }} />
+        <Button title="Add contact" kind="secondary" onPress={() => setEditing(-1)} testID="emergency-add-contact-button" style={{ marginTop: spacing.sm }} />
         <Button
           title="Send test message"
           kind="danger"
@@ -470,6 +499,30 @@ export default function SettingsScreen() {
           team&apos;s advice.
         </Hint>
       </KeyboardAwareScrollView>
+
+      <ContactSheet
+        visible={editing !== null}
+        contact={editing !== null && editing >= 0 ? draft.em_contacts[editing] : null}
+        smsDefault={draft.em_sms_schedule}
+        callDefault={draft.em_call_schedule}
+        onSave={(c) => {
+          const list = [...draft.em_contacts];
+          if (editing !== null && editing >= 0) list[editing] = c;
+          else list.push(c);
+          set("em_contacts", list);
+          setEditing(null);
+          toast("Contact updated. Tap Save to keep it.", "info");
+        }}
+        onDelete={
+          editing !== null && editing >= 0
+            ? () => {
+                set("em_contacts", draft.em_contacts.filter((_, j) => j !== editing));
+                setEditing(null);
+              }
+            : undefined
+        }
+        onClose={() => setEditing(null)}
+      />
 
       <Modal visible={!!permSheet} transparent animationType="slide" onRequestClose={() => setPermSheet(null)}>
         <Pressable style={styles.backdrop} onPress={() => setPermSheet(null)} />
