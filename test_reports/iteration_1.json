@@ -1,0 +1,39 @@
+{
+  "summary": "First test run of xDrip+ iOS-style app. Backend: 27/27 pytest tests PASS, covering status, settings (secret masking + threshold-order 422), readings (range + bucketing + 400 for >90 days), treatments CRUD, stats (TIR), alarm ack, location, emergency test (friendly 400 'Text and call service is not set up yet'), emergency log, sync, Nightscout and Tidepool uploads 400 without creds, AI SSE streaming (verified real text chunks arrive). Frontend (mobile 390x844): Home shows current value/trend/delta/age, source pill, all 4 range chips (3h/6h/12h/24h) tappable and chart updates, tap on chart shows home-glucose-chart-tooltip with value and time ('180 mg/dL, Nov 9, 23:50'). FAB opens treatment sheet, insulin/carbs/note flows work, created treatment appears in list and can be deleted. AI daily recap button streams a ~700 char summary. History tab: chart renders, all 5 period chips (1/3/7/30/90) work, chart tooltip works, prev/next day nav renders only in Day mode (expected). Stats tab: TIR %, average, median, GMI, SD, CV all displayed. Settings: unit switch converts thresholds between mg/dL and mmol/L, save works, emergency test button surfaces the friendly 400 toast. Deprecated package detected: expo-router/unstable-native-tabs (warning in console). One minor UI issue: Treatment sheet Save button sits just outside the 844px viewport and needs scroll to be visible.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TreatmentSheet", "issue": "Save button rendered below the viewport on 390x844; user must scroll inside the sheet to reach it. Needs a KeyboardAvoidingView or compact layout / safe-area adjustment.", "testID": "treatment-save-button", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "TreatmentSheet", "issues": ["Save button not visible without scrolling on standard iPhone viewport (390x844)"]}
+    ],
+    "react_native_issues": [
+      {"component": "tabs layout", "issue": "Deprecated: `expo-router/unstable-native-tabs` is deprecated. Use `expo-router/native-tabs` instead. Reference: /app/frontend/app/(tabs)/_layout.tsx"},
+      {"component": "GlucoseChart / reanimated", "issue": "Console warning: 'using shared value's .value inside reanimated inline style'. Use the shared value directly (useAnimatedStyle) instead. Reference: /app/frontend/src/components/GlucoseChart.tsx"}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_xdrip_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Migrate tabs layout import from `expo-router/unstable-native-tabs` to `expo-router/native-tabs`.",
+    "Fix TreatmentSheet so Save button is always reachable on 390x844 (e.g. wrap content in a ScrollView or reduce vertical padding / use SafeAreaView bottom inset).",
+    "Replace `sharedValue.value` references inside inline style objects in GlucoseChart with `useAnimatedStyle` to silence reanimated warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py `now_utc` is defined via a lambda assignment which trips linters; prefer `def now_utc(): return datetime.now(timezone.utc)`.",
+    "`ALARM_LABELS[alarm['type']]` is read without a key-exists guard in /api/status; if a stale alarm type sneaks in it will 500 (minor, state is controlled).",
+    "insert_readings swallows BulkWriteError and only returns nInserted, but doesn't surface duplicate-key info; acceptable but logging would help.",
+    "AI summary uses model 'claude-sonnet-5-5' – verify this is intentional vs claude-sonnet-4-5."
+  ],
+  "updated_files": ["/app/backend/tests/test_xdrip_api.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "seed_data_creation": "None. Only transient TEST_ treatments were created and all were deleted at the end. Source restored to demo, unit restored to mgdl, em_contacts cleared.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite lives at /app/backend/tests/test_xdrip_api.py (27 tests, ~10s runtime). Chart tooltips use testID pattern `{home|history}-glucose-chart-tooltip` + `-value` / `-time`. Range chips use `chart-range-{3|6|12|24}`; history period chips `history-period-{1|3|7|30|90}`; stats period chips `stats-period-{...}`. History prev/next day buttons are ONLY rendered when the 'Day' (1) period is selected. Treatment Save button requires scroll_into_view in default iPhone viewport.",
+  "rca_of_issue": "Treatment Save button out-of-viewport: the TreatmentSheet renders as a bottom sheet whose content (kind chips, amount input, note input, time chips, save button) exceeds the available height on 390x844, and there is no inner ScrollView, so the Save button is pushed off-screen. Mitigation: wrap the sheet body in a ScrollView or compact spacing so the Save button remains within the visible area, or use KeyboardAvoidingView with keyboardVerticalOffset."
+}

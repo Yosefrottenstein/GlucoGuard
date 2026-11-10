@@ -1,0 +1,154 @@
+{
+  "app_name": "xDrip-Apple",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A clinical yet calming, highly readable interface focusing on immediate metabolic data clarity and user trust.",
+  "color": {
+    "surface": "#F2F2F7",
+    "onSurface": "#1C1C1E",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1C1C1E",
+    "surfaceTertiary": "#E5E5EA",
+    "onSurfaceTertiary": "#3A3A3C",
+    "surfaceInverse": "#1C1C1E",
+    "onSurfaceInverse": "#F2F2F7",
+    "muted": "#8E8E93",
+    "brand": "#34C759",
+    "onBrand": "#FFFFFF",
+    "brandPrimary": "#34C759",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#E5F7EB",
+    "onBrandSecondary": "#1C1C1E",
+    "brandTertiary": "#F2FBF4",
+    "onBrandTertiary": "#1E7233",
+    "success": "#34C759",
+    "onSuccess": "#FFFFFF",
+    "warning": "#FF9500",
+    "onWarning": "#FFFFFF",
+    "error": "#FF3B30",
+    "onError": "#FFFFFF",
+    "info": "#8E8E93",
+    "onInfo": "#FFFFFF",
+    "border": "#E5E5EA",
+    "borderStrong": "#C7C7CC",
+    "divider": "#E5E5EA",
+    "inRange": "#34C759",
+    "high": "#FF9500",
+    "low": "#FF3B30"
+  },
+  "typography": {
+    "displayFontFamily": "SpaceGrotesk",
+    "textFontFamily": "PlusJakartaSans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Use iOS-native spacing rhythms with generous padding around core health metrics. Thumb zone CTA where applicable.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 1,
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use glass effect on sticky headers over scrolling graphs.",
+      "Use glass for the bottom tab bar.",
+      "Use glass for floating action buttons or bottom-sheet handles."
+    ],
+    "dont's": [
+      "Do not apply glass to dense data rows or generic list items.",
+      "Do not blur form fields or input elements."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home",
+      "purpose": "Provide an immediate, clear overview of the current glucose value, trend, and recent history graph.",
+      "states": {
+        "loading": "Centered spinner",
+        "empty": "No sensor connected state with illustration and 'Start Demo or Manual' CTA",
+        "error": "Error message with retry connection button"
+      },
+      "layout": "Top section: large current glucose value (using displayFontFamily) with trend arrow and delta. Below: live glucose graph with high/low target range bands. Floating Action Button (FAB) or bottom sheet trigger for adding treatments (insulin/carbs). AI summary card at the bottom of the scroll view. Status/alarm banners sticky at the top if active."
+    },
+    {
+      "name": "History",
+      "purpose": "Allow users to browse past day logs, view daily graphs, and see list of logged events.",
+      "states": {
+        "loading": "Skeleton loader for list",
+        "empty": "No data for this day message",
+        "error": "Failed to load history"
+      },
+      "layout": "Sticky header with prev/next day navigator. Scrollable view containing the day's graph at the top, followed by a chronological list of events (glucose readings, carbs, insulin) as standard list rows."
+    },
+    {
+      "name": "Stats",
+      "purpose": "Display aggregate health metrics over selectable time periods (1/7/14/30 days).",
+      "states": {
+        "loading": "Spinner",
+        "empty": "Not enough data to generate stats",
+        "error": "Failed to calculate stats"
+      },
+      "layout": "Segmented control at the top for time period selection. Large 'Time in Range' stacked horizontal bar chart. Below: Grid of cards for Average Glucose, GMI, and SD (Standard Deviation). Use display font for large stat numbers."
+    },
+    {
+      "name": "Settings",
+      "purpose": "Configure app preferences, thresholds, units, and Nightscout integration.",
+      "states": {
+        "loading": "Spinner",
+        "empty": "N/A",
+        "error": "Failed to save settings"
+      },
+      "layout": "Standard iOS grouped list layout. Sections for: Units (mg/dL / mmol/L), Glucose Thresholds (High/Low inputs), Data Source (Demo/Manual toggle), and Nightscout Sync (URL/Secret inputs + Upload CTA)."
+    }
+  ],
+  "images": {
+    "ai_summary_bg": {
+      "url": "https://images.unsplash.com/photo-1635776062360-af423602aff3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwxfHxsaWdodCUyMGFic3RyYWN0JTIwZ3JhZGllbnQlMjB0ZXh0dXJlJTIwbWluaW1hbHxlbnwwfHx8fDE3OTQyODM2Njh8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Subtle light gradient background for the AI summary card"
+    },
+    "empty_state_medical": {
+      "url": "https://images.unsplash.com/photo-1755287066058-80c68aaaf0e3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwxfHxtaW5pbWFsaXN0aWMlMjBza2V0Y2glMjBvZiUyMGElMjBkb2N0b3IlMjBvciUyMGhlYWx0aCUyMHByb2Zlc3Npb25hbCUyMG9yJTIwaGVhcnRiZWF0fGVufDB8fHx8MTc5NDI4MzY3Mnww&ixlib=rb-4.1.0&q=85",
+      "alt": "Minimalist medical sketch for empty states"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Follow the iOS-Native Clean personality. Keep the interface extremely readable with generous padding (lg/xl).",
+    "The primary focus is the live glucose reading. Use the `SpaceGrotesk` font for the large number, trend arrow, and delta. Color code the number based on the range (inRange, high, low).",
+    "Implement the glucose graph with clear visual bands for target ranges. Overlay treatment markers (carbs/insulin) directly on the graph or below it.",
+    "Use standard iOS grouped lists (`surfaceSecondary` cards on a `surface` background) for Settings and Stats grid.",
+    "The AI summary card should use the `ai_summary_bg` image with a gradient-to-dark scrim (as per imagery rules) overlaid with white text, providing a premium feel.",
+    "Banners for High/Low alarms should be distinct (using `warning` or `error` surface colors) but not overly aggressive. Pin them below the header when active.",
+    "Use a Bottom Sheet for adding treatments (insulin/carbs/note) to keep the user in the context of the Home screen graph.",
+    "Ensure numeric inputs and displays adapt correctly to the chosen unit (mg/dL vs mmol/L) as per the settings state."
+  ]
+}
