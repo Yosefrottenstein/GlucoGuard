@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 
 import { ErrorBoundary } from "@/src/components/error-boundary";
+import { SensorCollector } from "@/src/components/SensorCollector";
 import { ToastProvider } from "@/src/components/Toast";
 import { queryClient } from "@/src/query-client";
 
@@ -29,6 +30,7 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <KeyboardProvider>
             <ToastProvider>
+              <SensorCollector />
               <Stack screenOptions={{ headerShown: false }} />
             </ToastProvider>
           </KeyboardProvider>

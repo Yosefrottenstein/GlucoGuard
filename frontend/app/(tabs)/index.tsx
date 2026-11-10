@@ -18,6 +18,7 @@ import { agoText, arrow, deltaText, fmtTime, levelColor, minutesAgo, SOURCE_LABE
 import { usesNativeTabs } from "@/src/navigation";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 import { useLocationReporter } from "@/src/useLocationReporter";
+import { useG7Status } from "@/src/g7";
 
 const RANGES = [
   { value: "3", label: "3h" },
@@ -44,6 +45,7 @@ export default function Home() {
   }, []);
 
   const status = useQuery({ queryKey: ["status"], queryFn: () => api<Status>("/status"), refetchInterval: 30000 });
+  const g7 = useG7Status();
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/settings") });
   useLocationReporter(!!settings.data?.em_enabled && !!settings.data?.em_location);
 
@@ -118,7 +120,9 @@ export default function Home() {
         <Text style={styles.brand}>xDrip</Text>
         <View style={styles.pill} testID="home-source-pill">
           <View style={[styles.dot, { backgroundColor: s.last_error ? colors.error : colors.success }]} />
-          <Text style={styles.pillText}>{SOURCE_LABELS[s.source]}</Text>
+          <Text style={styles.pillText}>
+            {s.source === "bluetooth" && g7.state !== "idle" ? `G7 · ${g7.state === "connected" ? "connected" : "searching"}` : SOURCE_LABELS[s.source]}
+          </Text>
         </View>
       </View>
 
@@ -171,7 +175,7 @@ export default function Home() {
             ) : (
               <Text style={styles.muted} testID="no-readings-text">
                 {s.source === "bluetooth"
-                  ? "Bluetooth sensor selected. Live readings from the sensor are coming in the next step; use Follower mode meanwhile."
+                  ? `Bluetooth sensor: ${g7.message}. Readings appear here when the sensor sends one (every 5 minutes).`
                   : "No readings yet. Pick a data source in Settings."}
               </Text>
             )}

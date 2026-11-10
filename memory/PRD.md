@@ -29,3 +29,7 @@ tap a dot on the chart to see value + time, compatible with as many sensors as p
   per-contact editor (nickname, phone, pick from phone contacts, SMS + call each on/off with Default/Always/custom hours),
   separate resend interval in minutes for SMS and calls while glucose stays at the same alarm level,
   triggers selectable: urgent low / low / high / urgent high. Server uses user's time zone (tz saved from phone).
+- Dexcom G7 direct Bluetooth (Master > Bluetooth > G7): src/g7.ts listens alongside the official Dexcom G7 app
+  (shared iOS connection, like LoopKit G7SensorKit / xDrip4iOS). Parses 0x4E glucose message (verified against Loop sample bytes),
+  posts to /api/readings/batch with offline queue. SensorCollector mounted in root layout. Needs TestFlight build to test.
+- Backlog: G7 backfill (missed readings), Libre 2 direct (NFC unlock + decryption), Dexcom Share upload.

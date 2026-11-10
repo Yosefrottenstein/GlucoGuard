@@ -16,7 +16,11 @@ export const SENSORS: Record<SensorType, { label: string; hint: string; match: (
     hint: "Enter the 6-character transmitter ID printed on the transmitter.",
     match: (n, tx) => n.startsWith("Dexcom") && (!tx || n.endsWith(tx.slice(-2).toUpperCase())),
   },
-  dexcom_g7: { label: "Dexcom G7 / ONE+", hint: "Keep the sensor close to the phone while searching.", match: (n) => n.startsWith("DXCM") },
+  dexcom_g7: {
+    label: "Dexcom G7 / ONE+",
+    hint: "Keep the official Dexcom G7 app installed and running. It starts the sensor and handles its security; xDrip listens to the same sensor.",
+    match: (n) => n.startsWith("DXCM"),
+  },
   libre2: { label: "Libre 2 / 2 Plus", hint: "Keep the sensor close to the phone while searching.", match: (n) => n.startsWith("ABBOTT") },
   libre3: { label: "Libre 3 / 3 Plus", hint: "Libre 3 is heavily encrypted; pairing is experimental.", match: (n) => n.length > 0 },
 };
@@ -28,7 +32,7 @@ export function getManager(): any {
   if (!manager) {
     // Lazy require: the native module doesn't exist in Expo Go / web.
     const { BleManager } = require("react-native-ble-plx");
-    manager = new BleManager();
+    manager = new BleManager({ restoreStateIdentifier: "xdrip-ble", restoreStateFunction: () => {} });
   }
   return manager;
 }
@@ -62,6 +66,12 @@ export function waitForState(): Promise<string> {
 
 export function scan(sensor: SensorType, tx: string, onDevice: (d: FoundDevice) => void, onError: (msg: string) => void) {
   const m = getManager();
+  if (sensor === "dexcom_g7") {
+    // A G7 already connected by the Dexcom app doesn't advertise; iOS can still hand it to us.
+    m.connectedDevices(["F8083532-849E-531C-C594-30F1F86A4EA5"])
+      .then((list: any[]) => list.forEach((d) => onDevice({ id: d.id, name: d.name ?? d.localName ?? "Dexcom G7", rssi: null })))
+      .catch(() => {});
+  }
   m.startDeviceScan(null, { allowDuplicates: false }, (error: any, device: any) => {
     if (error) {
       onError(error.message ?? "Bluetooth scan failed");

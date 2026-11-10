@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, Settings } from "@/src/api";
 import { bleSupported, FoundDevice, requestAndroidBluetooth, scan, SENSORS, waitForState } from "@/src/ble";
 import { useToast } from "@/src/components/Toast";
+import { useG7Status } from "@/src/g7";
 import { Button, Card, Hint } from "@/src/components/ui";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -21,6 +22,7 @@ export default function SensorScreen() {
   const toast = useToast();
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api<Settings>("/settings") });
+  const g7 = useG7Status();
   const [phase, setPhase] = useState<Phase>("intro");
   const [devices, setDevices] = useState<FoundDevice[]>([]);
   const stopRef = useRef<null | (() => void)>(null);
@@ -87,6 +89,13 @@ export default function SensorScreen() {
               Paired: {settings.data.bt_device_name}
             </Text>
           ) : null}
+          {sensor === "dexcom_g7" && settings.data?.source === "bluetooth" && bleSupported ? (
+            <Text style={styles.body} testID="sensor-live-status">
+              Status: {g7.message}
+              {g7.sensorState ? ` · Sensor: ${g7.sensorState}` : ""}
+              {g7.lastValue ? ` · Last value ${g7.lastValue} mg/dL` : ""}
+            </Text>
+          ) : null}
         </Card>
 
         {!bleSupported ? (
@@ -150,8 +159,9 @@ export default function SensorScreen() {
           </>
         )}
         <Hint>
-          Pairing saves your sensor. Reading glucose straight from {info.label} is being added step by step. Until then, use Follower mode
-          or manual entry for live values.
+          {sensor === "dexcom_g7"
+            ? "Live G7 readings work while the official Dexcom G7 app keeps running. Starting a new sensor is still done in the Dexcom app."
+            : `Pairing saves your sensor. Reading glucose straight from ${info.label} isn't built yet. Until then, use Follower mode or manual entry.`}
         </Hint>
       </ScrollView>
     </View>
