@@ -9,6 +9,7 @@ import { AuthProvider, useAuth } from "@/src/auth";
 import { AlarmWatcher } from "@/src/components/AlarmWatcher";
 import { LoginScreen } from "@/src/components/LoginScreen";
 import { EmailPromptScreen } from "@/src/components/EmailPrompt";
+import { EmailReminder } from "@/src/components/EmailReminder";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { SensorCollector } from "@/src/components/SensorCollector";
 import { ToastProvider } from "@/src/components/Toast";
@@ -54,6 +55,7 @@ function AuthGate() {
     <>
       <SensorCollector />
       <AlarmWatcher />
+      <EmailReminder />
       <Stack screenOptions={{ headerShown: false }} />
     </>
   );

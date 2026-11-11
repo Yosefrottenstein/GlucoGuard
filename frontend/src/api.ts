@@ -27,7 +27,7 @@ export type Reminder = {
 };
 
 export type Unit = "mgdl" | "mmol";
-export type Source = "demo" | "manual" | "bluetooth" | "nightscout" | "dexcom" | "libre";
+export type Source = "demo" | "manual" | "bluetooth" | "companion" | "nightscout" | "dexcom" | "libre";
 export type SensorType = "dexcom_g6" | "dexcom_g7" | "libre2" | "libre3";
 
 export type Reading = { ts: string; sgv: number; direction: string };

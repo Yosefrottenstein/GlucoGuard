@@ -525,10 +525,10 @@ async def list_readings(start: datetime, end: Optional[datetime] = None, bucket:
     end = end or now_utc()
     if end - start > timedelta(days=HISTORY_DAYS + 1):
         raise HTTPException(400, "Range too large")
-    cur = udb.readings.find({"ts": {"$gte": start, "$lte": end}}, {"_id": 0, "ts": 1, "sgv": 1, "direction": 1}).sort("ts", 1)
+    cur = udb.readings.find({"ts": {"$gte": start, "$lte": end}}, {"_id": 0, "ts": 1, "sgv": 1, "direction": 1, "source": 1}).sort("ts", 1)
     rows = await cur.to_list(None)
     if not bucket:
-        return [{"ts": r["ts"], "sgv": r["sgv"], "direction": r.get("direction", "NONE")} for r in rows]
+        return [{"ts": r["ts"], "sgv": r["sgv"], "direction": r.get("direction", "NONE"), "source": r.get("source")} for r in rows]
     size = bucket * 60
     groups: dict[int, list[int]] = {}
     for r in rows:
@@ -559,7 +559,7 @@ async def add_reading(body: ReadingIn):
 async def add_reading_batch(body: ReadingBatchIn):
     """Readings collected by the phone from a Bluetooth sensor (Master mode)."""
     items = [{"ts": r.ts.astimezone(timezone.utc), "sgv": r.sgv, "direction": r.direction} for r in body.readings]
-    added = await insert_readings(items, "bluetooth")
+    added = await insert_readings(items, body.source)
     asyncio.create_task(check_alarms(await get_settings()))
     return {"added": added}
 
@@ -744,6 +744,13 @@ async def sms_outbox_result(sid: str, body: SmsResultIn):
     await udb.emergency_log.insert_one(EmergencyLog(ts=now_utc(), test=doc["body"].startswith("TEST"),
                                                     message=doc["body"], results=[text]).to_mongo())
     return {"ok": True}
+
+
+@api.delete("/twilio")
+async def twilio_disconnect():
+    """Removes the user's own Twilio account completely."""
+    await db.settings.update_one({"_id": CURRENT_UID.get()}, {"$set": {"twilio_sid": "", "twilio_token": "", "twilio_from": ""}})
+    return (await get_settings()).public()
 
 
 @api.post("/dexcom/upload")

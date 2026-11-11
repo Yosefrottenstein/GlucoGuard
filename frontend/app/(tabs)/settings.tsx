@@ -35,6 +35,10 @@ import {
 } from "@/src/sensorAlerts";
 import { format, isValid, parse } from "date-fns";
 import { spacing, useTheme } from "@/src/theme";
+import { CompanionCard } from "@/src/components/settings/CompanionCard";
+import { HealthCard } from "@/src/components/settings/HealthCard";
+import { healthPlatform } from "@/src/health";
+import { isAndroid } from "@/src/phoneSms";
 
 const useStyles = useSettingsStyles;
 const ALL_THR: { key: ThrKey; label: string }[] = [...TARGET, ...THR];
@@ -59,6 +63,9 @@ const FOLLOWER: SourceOpt[] = [
 ];
 const MASTER: SourceOpt[] = [
   { value: "bluetooth", title: "Bluetooth sensor", sub: "Talk to the sensor directly, then upload to Nightscout and Tidepool" },
+  ...(isAndroid
+    ? [{ value: "companion" as Source, title: "Companion app", sub: "Read glucose from Dexcom, Libre, Omnipod, CamAPS and other apps on this phone" }]
+    : []),
   { value: "manual", title: "Manual entry", sub: "Type finger-stick or sensor values yourself" },
   { value: "demo", title: "Demo sensor", sub: "Realistic sample data to try the app" },
 ];
@@ -335,6 +342,7 @@ export default function SettingsScreen() {
             </Pressable>
           ))}
         </Card>
+        {draft.source === "companion" && <CompanionCard />}
         {draft.source === "bluetooth" && (
           <Card style={styles.subCard} testID="bluetooth-sensor-card">
             <View style={styles.inlineChips}>
@@ -517,6 +525,7 @@ export default function SettingsScreen() {
           tpUpload={tpUpload}
           dxUpload={dxUpload}
         />
+        {healthPlatform && <HealthCard />}
 
         <Hint>
           This app is for information only. Don&apos;t make treatment decisions from it alone. Confirm with a meter and follow your care

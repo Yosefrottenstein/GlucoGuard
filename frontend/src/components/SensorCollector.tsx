@@ -6,6 +6,8 @@ import { api, Settings } from "@/src/api";
 import { bleSupported } from "@/src/ble";
 import { setG7ActivationHandler, startG7, stopG7 } from "@/src/g7";
 import { startLibre2, stopLibre2 } from "@/src/libre2";
+import { drainCompanion } from "@/src/companion";
+import { healthPlatform, syncHealth } from "@/src/health";
 import { drainSmsOutbox, phoneSmsSupported } from "@/src/phoneSms";
 import { scheduleReminders, scheduleSensorAlerts } from "@/src/sensorAlerts";
 
@@ -44,6 +46,21 @@ export function SensorCollector() {
     startLibre2(deviceId);
     return () => stopLibre2();
   }, [libre2, deviceId]);
+
+  const companion = s?.source === "companion";
+  useEffect(() => {
+    if (!companion) return;
+    drainCompanion();
+    const t = setInterval(drainCompanion, 60000);
+    return () => clearInterval(t);
+  }, [companion]);
+
+  useEffect(() => {
+    if (!healthPlatform) return;
+    syncHealth();
+    const t = setInterval(syncHealth, 5 * 60000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     if (!phoneSms) return;

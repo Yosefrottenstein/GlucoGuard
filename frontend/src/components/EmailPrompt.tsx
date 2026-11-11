@@ -12,6 +12,8 @@ import { useToast } from "./Toast";
 import { Button } from "./ui";
 
 export const NO_EMAIL_WARNING = "Without an email there is no way to get back into your account if you forget your password.";
+// set when the user skips the sign-up email screen, so the start-up reminder doesn't nag right away
+export const emailPromptState = { skippedNow: false };
 const validEmail = (v: string) => /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v.trim());
 
 async function saveEmail(email: string) {
@@ -72,7 +74,16 @@ export function EmailPromptScreen() {
           <View style={styles.warnBox} testID="email-skip-warning">
             <Text style={styles.warnTitle}>Are you sure?</Text>
             <Text style={styles.warnText}>{NO_EMAIL_WARNING} You can add one later in Settings.</Text>
-            <Button title="Skip anyway" kind="secondary" onPress={emailDone} testID="email-skip-confirm-button" style={{ marginTop: spacing.md }} />
+            <Button
+              title="Skip anyway"
+              kind="secondary"
+              onPress={() => {
+                emailPromptState.skippedNow = true;
+                emailDone();
+              }}
+              testID="email-skip-confirm-button"
+              style={{ marginTop: spacing.md }}
+            />
           </View>
         ) : (
           <Pressable testID="email-prompt-skip" onPress={() => setConfirmSkip(true)} style={styles.skip}>

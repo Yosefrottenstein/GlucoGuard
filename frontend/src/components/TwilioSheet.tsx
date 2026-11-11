@@ -29,6 +29,22 @@ export function TwilioSheet({
   const [token, setToken] = useState("");
   const [from, setFrom] = useState(settings.twilio_from);
   const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
+  const disconnect = async () => {
+    setRemoving(true);
+    try {
+      const data = await api<Settings>("/twilio", { method: "DELETE" });
+      qc.setQueryData(["settings"], data);
+      onSaved(data);
+      toast("Twilio account removed", "success");
+      onClose();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setRemoving(false);
+    }
+  };
 
   const save = async () => {
     const s = sid.trim();
@@ -68,6 +84,9 @@ export function TwilioSheet({
       />
       <Field label="Twilio number" value={from} onChangeText={setFrom} placeholder="+15551234567" keyboardType="phone-pad" testID="twilio-from-input" last />
       <Button title="Save Twilio account" onPress={save} loading={busy} testID="twilio-save-button" style={{ marginTop: spacing.lg }} />
+      {(settings.twilio_sid || settings.twilio_token_set) && (
+        <Button title="Disconnect Twilio account" kind="danger" onPress={disconnect} loading={removing} testID="twilio-disconnect-button" style={{ marginTop: spacing.sm }} />
+      )}
     </Sheet>
   );
 }

@@ -96,6 +96,14 @@
           "selectIdentifiers": [],
           "includeNdefEntitlement": false
         }
+      ],
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "Read glucose you saved to Apple Health",
+          "NSHealthUpdateUsageDescription": "Save your glucose readings to Apple Health",
+          "background": false
+        }
       ]
     ],
     "experiments": {

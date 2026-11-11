@@ -75,3 +75,13 @@ tap a dot on the chart to see value + time, compatible with as many sensors as p
 - Location reports include a reverse-geocoded street address; SMS shows address + map link, voice call speaks the address.
 - Stats bands clamped so they never cross. Duplicate /auth/me removed. 126/126 backend tests.
 - Open question from user: "companion app" mode (read glucose from other apps on the same phone).
+
+## Iteration 9
+- Android Companion mode: local Expo module modules/companion-glucose (NotificationListenerService reads glucose from
+  Dexcom/Libre/Omnipod/CamAPS/Eversense/Medtrum/Beta Bionics/twiist/Tandem notifications incl. custom RemoteViews) →
+  SharedPreferences queue → src/companion.ts drains every minute → /api/readings/batch {source:"companion"}. Source option
+  "Companion app" (Android only) + CompanionCard (notification access status/button). Native build only.
+- iPhone "Upload to Apple Health" (@kingstinct/react-native-healthkit + nitro-modules): writes Blood Glucose every 5 min
+  (src/health.ts, HealthCard). Device-level toggle in AsyncStorage. Native build only.
+- Recovery email reminder sheet on each app start if no email (EmailReminder.tsx), not right after skipping at sign-up.
+- Disconnect Twilio: DELETE /api/twilio + button in TwilioSheet.

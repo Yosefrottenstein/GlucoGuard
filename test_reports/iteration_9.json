@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 9: tested DELETE /api/twilio, the 'companion' source in readings/batch, the recovery email reminder, the Twilio disconnect UI, and that the Companion and Apple Health options are hidden on web. Backend: 6 of 7 pytest pass. DELETE /api/twilio clears sid, token and from (checked in the raw DB), returns twilio_token_set=false, can be called twice, and returns 401 without auth. Batch with source 'companion' stores source=companion, leaving it out stores bluetooth, and an invalid source returns 422. FAIL: GET /api/readings does NOT return 'source' per row. The non-bucket path in server.py:530 builds each row from ts, sgv and direction only. Because of this, the 'skip demo readings' filter in health.ts never matches, so demo readings would be copied into Apple Health. Frontend (web, 390x844): all requested flows pass. The reminder sheet shows about 1.5 s after Home loads, 'Later' closes it, 'Add email' opens email-sheet, and it shows again on the next app start. After registering and skipping the email prompt, no reminder appears in that session. Twilio save shows 'Connected · +15550001111'. Reopening the row shows the disconnect button; tapping it shows the toast 'Twilio account removed' and the row goes back to 'Needed for emergency texts and calls on iPhone'. After the main Save the DB still has empty sid, token and from. On web, 'Companion app', companion-card, 'Apple Health' and health-upload-toggle are all absent. No page errors from healthkit or nitro-modules. No deprecated Expo packages found.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/readings", "issue": "Rows have no 'source' field when bucket=0. server.py:530 reads source from Mongo but returns only {ts, sgv, direction}. Fix: add \"source\": r.get(\"source\") to that dict. Because of this, health.ts:58 (r.source === 'demo') never filters, so demo readings would be uploaded to Apple Health, which contradicts the HealthCard hint 'Demo readings are never copied'.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "DELETE /api/twilio", "issue": "It doesn't check em_enabled. An iPhone user with Emergency messages on can remove Twilio and then quietly have no way to send texts or calls. Consider warning in the response or the UI."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Apple Health sync (iOS)", "issue": "Depends on the 'source' field that GET /api/readings doesn't return (see backend critical), so demo readings would be copied to Health.", "affected_testIDs": ["health-upload-toggle"]}
+    ],
+    "design_issues": [
+      {"screen": "TwilioSheet", "issues": ["'Disconnect Twilio account' deletes the account with one tap and no confirmation. Add a confirm step, since it can turn off iPhone emergency texts.", "After disconnecting, the page is marked dirty (set() calls in EmergencySection onSaved), even though the server is already updated, so the user is asked to press Save for nothing."]},
+      {"screen": "Settings header", "issue_note": "The toast sits on top of the 'Settings' title. This is cosmetic only.", "issues": ["Toast covers the screen title while it is visible"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter9_twilio_delete_companion.py", "/app/test_reports/pytest/pytest_iter9.xml"],
+  "action_items": [
+    "HIGH: server.py:530, in list_readings with bucket=0, add 'source': r.get('source') to each row. Without it, the demo filter in health.ts doesn't work.",
+    "health.ts syncHealth: if LAST_KEY is more than 91 days old, /readings returns 400 'Range too large'. The catch swallows it and LAST_KEY never moves, so sync stops for good. Clamp 'since' to now minus 90 days.",
+    "health.ts syncHealth: if a save fails partway through, the catch skips saving LAST_KEY, so samples already written are uploaded again next time (duplicates in Health). Save LAST_KEY in the catch or finally block.",
+    "Companion mode: uploads only happen from a JS setInterval while the app is in the foreground (SensorCollector). On Android the notification listener keeps storing values, but nothing reaches the server while the app is in the background, so server-side alarms and emergency messages are late. Consider a native WorkManager or HTTP upload from the service, or at least say so in CompanionCard.",
+    "companion.ts APP_NAMES is missing com.microtechmd. and com.sinocare., which the Kotlin PREFIXES list does include, so the raw package name is shown for those apps.",
+    "Optional: ask for confirmation before Disconnect Twilio, and warn when Emergency messages are on with no Twilio account on iPhone."
+  ],
+  "critical_code_review_comments": [
+    "GlucoseNotificationService.parse: any number-only TextView from an allowed app counts as glucose, for example a pump's '100' battery value shown without a '%' in its own view, or a pod reservoir '150' without a unit. This could give false readings. Consider trusting only the main value view or requiring a unit or trend.",
+    "emailPromptState.skippedNow is a module-level flag. If a new user skips the email prompt, signs out, and demo_user signs in during the same session, demo_user never sees the reminder. This is a minor edge case.",
+    "settings.tsx is 791 lines and server.py is 851 lines, both over the 700-line guideline."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter9_twilio_delete_companion.py"],
+  "success_rate": {"backend": "86% (6/7, GET /api/readings source missing)", "frontend": "100% of requested web flows passed"},
+  "seed_data_creation": "Created test user test9_a4b0 in the UI. Deleted afterwards by its _id: the user doc, its state doc and 25,920 auto-generated demo readings. Test readings at 2026-11-11T03:02:17Z, 03:07:17Z and 03:12:17Z were deleted by uid+ts. demo_user ends with twilio_sid, twilio_from and twilio_token all '', em_enabled=false, em_contacts=[], email=None, source=demo. Its leftover twilio_token 'TEST_fff…' from an earlier run was cleared by DELETE /api/twilio.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "pytest.ini adds xdist, so run with -n0 for module-scoped fixtures. Login returns access_token. Web counts as iPhone. On web the reminder sheet needs about 1 s after it becomes visible before its buttons can be clicked (slide animation). The current server time in this environment is around 2026-11-11 04:20Z, so demo readings exist at :00/:05 timestamps; use ts with seconds.",
+  "rca_of_issue": "GET /api/readings source: list_readings (server.py:528-530) adds source to the Mongo projection, but the response comprehension for bucket=0 only maps ts, sgv and direction. Reproduce: POST /api/readings/batch {source:'companion', readings:[{ts:'2026-11-11T03:02:17Z', sgv:111}]}, then GET /api/readings?start=2026-11-11T03:00:00Z&end=2026-11-11T03:15:00Z. The row has no 'source'."
+}
