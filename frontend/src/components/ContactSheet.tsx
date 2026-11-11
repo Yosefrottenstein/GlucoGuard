@@ -13,7 +13,8 @@ import { useToast } from "./Toast";
 import { Button, Field, ToggleRow } from "./ui";
 
 const channel = (enabled: boolean): ChannelSchedule => ({ enabled, mode: "always", windows: [], repeat_minutes: 5 });
-const fresh = (): Contact => ({ name: "", phone: "", sms: channel(true), call: channel(false), sms_via: "cloud" });
+const SMS_VIA: Contact["sms_via"] = isAndroid ? "phone" : "cloud"; // Android texts from its own number, iPhone via Twilio
+const fresh = (): Contact => ({ name: "", phone: "", sms: channel(true), call: channel(false), sms_via: SMS_VIA });
 const minutes = (t: string) => Math.min(720, parseInt(t.replace(/\D/g, ""), 10) || 0);
 // older saves may still say "default"; show them as "any time"
 const clean = (s: ChannelSchedule): ChannelSchedule => ({ ...channel(s.enabled), ...s, mode: s.mode === "hours" ? "hours" : "always" });
@@ -22,12 +23,14 @@ export function ContactSheet({
   visible,
   contact,
   onSave,
+  onTest,
   onDelete,
   onClose,
 }: {
   visible: boolean;
   contact: Contact | null;
   onSave: (c: Contact) => void;
+  onTest: (c: Contact, channel: "sms" | "call") => Promise<string>;
   onDelete?: () => void;
   onClose: () => void;
 }) {
@@ -37,12 +40,27 @@ export function ContactSheet({
   const toast = useToast();
   const [c, setC] = useState<Contact>(fresh());
   const [smsPerm, setSmsPerm] = useState<null | "ask" | "settings">(null);
+  const [testing, setTesting] = useState<null | "sms" | "call">(null);
+
+  const runTest = async (channel: "sms" | "call") => {
+    const phone = c.phone.replace(/[\s()-]/g, "");
+    if (!c.name.trim() || !/^\+\d{7,15}$/.test(phone)) return toast("Enter a nickname and a phone with country code first", "error");
+    setTesting(channel);
+    try {
+      toast(await onTest({ ...c, name: c.name.trim(), phone }, channel), "info");
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setTesting(null);
+    }
+  };
 
   useEffect(() => {
     if (!visible) return;
-    const base = contact ? { ...fresh(), ...contact } : fresh();
+    const base = contact ? { ...fresh(), ...contact, sms_via: isAndroid ? SMS_VIA : contact.sms_via } : fresh();
     setC({ ...base, sms: clean(base.sms), call: clean(base.call) });
     setSmsPerm(null);
+    if (isAndroid && phoneSmsSupported) smsPermission().then((ok) => !ok && base.sms.enabled && setSmsPerm("ask"));
   }, [visible, contact]);
 
   const pickFromPhone = async () => {
@@ -59,10 +77,6 @@ export function ContactSheet({
     }
   };
 
-  const choosePhoneSms = async () => {
-    setC((x) => ({ ...x, sms_via: "phone" }));
-    if (phoneSmsSupported && !(await smsPermission())) setSmsPerm("ask");
-  };
   const askSms = async () => setSmsPerm((await requestSmsPermission()) === "granted" ? null : "settings");
 
   const save = () => {
@@ -94,27 +108,11 @@ export function ContactSheet({
             <ToggleRow label="Send texts to this contact" value={c.sms.enabled} onChange={(v) => setC({ ...c, sms: { ...c.sms, enabled: v } })} testID="contact-sms-toggle" last={!c.sms.enabled} />
             {c.sms.enabled && (
               <>
-                {isAndroid && (
-                  <View style={styles.viaBox}>
-                    {[
-                      { v: "phone" as const, t: "From this phone's SIM card", s: "Like xDrip+: no Twilio. Needs signal and the app running." },
-                      { v: "cloud" as const, t: "From the cloud (Twilio)", s: "Works even if this phone is off or has no signal" },
-                    ].map((o) => (
-                      <Pressable
-                        key={o.v}
-                        testID={`contact-sms-via-${o.v}`}
-                        onPress={() => (o.v === "phone" ? choosePhoneSms() : setC({ ...c, sms_via: "cloud" }))}
-                        style={styles.radioRow}
-                      >
-                        <Ionicons name={c.sms_via === o.v ? "radio-button-on" : "radio-button-off"} size={22} color={c.sms_via === o.v ? colors.brandPrimary : colors.borderStrong} />
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.radioTitle}>{o.t}</Text>
-                          <Text style={styles.radioSub}>{o.s}</Text>
-                        </View>
-                      </Pressable>
-                    ))}
-                  </View>
-                )}
+                <Text style={styles.radioSub}>
+                  {isAndroid
+                    ? "Sent from this phone's own number (needs signal and GlucoGuard running)."
+                    : "Sent through your Twilio account (iPhone can't text by itself)."}
+                </Text>
                 {smsPerm && (
                   <View style={styles.permBox} testID="contact-sms-permission">
                     <Text style={styles.radioSub}>
@@ -130,7 +128,7 @@ export function ContactSheet({
                     />
                   </View>
                 )}
-                {isAndroid && c.sms_via === "phone" && !phoneSmsSupported && (
+                {isAndroid && !phoneSmsSupported && (
                   <Text style={styles.radioSub}>Texts from the SIM card work in the installed Android app, not in Expo Go.</Text>
                 )}
                 <Text style={styles.label}>When to text</Text>
@@ -144,13 +142,14 @@ export function ContactSheet({
                   testID="contact-sms-repeat-input"
                   last
                 />
+                <Button title="Send test text" kind="secondary" onPress={() => runTest("sms")} loading={testing === "sms"} testID="contact-test-sms-button" style={{ marginTop: spacing.sm }} />
               </>
             )}
 
             <Text style={styles.section}>Voice calls</Text>
             <ToggleRow
               label="Call this contact"
-              sub="A voice reads the alert aloud (Twilio)"
+              sub="A voice reads the alert and location aloud (your Twilio account)"
               value={c.call.enabled}
               onChange={(v) => setC({ ...c, call: { ...c.call, enabled: v } })}
               testID="contact-call-toggle"
@@ -169,6 +168,7 @@ export function ContactSheet({
                   testID="contact-call-repeat-input"
                   last
                 />
+                <Button title="Make test call" kind="secondary" onPress={() => runTest("call")} loading={testing === "call"} testID="contact-test-call-button" style={{ marginTop: spacing.sm }} />
               </>
             )}
 

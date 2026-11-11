@@ -5,53 +5,53 @@ import { Appearance, StyleSheet, useColorScheme } from "react-native";
 export type ColorScheme = "light" | "dark";
 
 const light = {
-  surface: "#F2F2F7",
-  onSurface: "#1C1C1E",
+  surface: "#FDFBF7",
+  onSurface: "#1C2B2D",
   surfaceSecondary: "#FFFFFF",
-  onSurfaceSecondary: "#1C1C1E",
-  surfaceTertiary: "#E5E5EA",
-  onSurfaceTertiary: "#3A3A3C",
-  surfaceInverse: "#1C1C1E",
-  onSurfaceInverse: "#F2F2F7",
-  muted: "#8E8E93",
+  onSurfaceSecondary: "#1C2B2D",
+  surfaceTertiary: "#F4EFE6",
+  onSurfaceTertiary: "#2C4446",
+  surfaceInverse: "#1C2B2D",
+  onSurfaceInverse: "#FDFBF7",
+  muted: "#748C8E",
 
-  brand: "#34C759",
+  brand: "#2B7A78",
   onBrand: "#FFFFFF",
-  brandPrimary: "#34C759",
+  brandPrimary: "#2B7A78",
   onBrandPrimary: "#FFFFFF",
-  brandSecondary: "#E5F7EB",
-  onBrandSecondary: "#1C1C1E",
-  brandTertiary: "#F2FBF4",
-  onBrandTertiary: "#1E7233",
+  brandSecondary: "#E2F1F0",
+  onBrandSecondary: "#1F5F5D",
+  brandTertiary: "#E2F1F0",
+  onBrandTertiary: "#1F5F5D",
 
-  success: "#34C759",
+  success: "#4E9F76",
   onSuccess: "#FFFFFF",
-  warning: "#FF9500",
+  warning: "#D97706",
   onWarning: "#FFFFFF",
-  error: "#FF3B30",
+  error: "#D32F2F",
   onError: "#FFFFFF",
-  info: "#8E8E93",
+  info: "#4A8C8E",
   onInfo: "#FFFFFF",
 
-  border: "#E5E5EA",
-  borderStrong: "#C7C7CC",
-  divider: "#E5E5EA",
+  border: "#E9E3D9",
+  borderStrong: "#D1C7B7",
+  divider: "#E9E3D9",
 
-  // glucose ranges (graph dots): red low, sky blue in range, yellow high
-  inRange: "#29B6F6",
-  high: "#FFC400",
-  low: "#FF3B30",
+  // glucose ranges (graph dots): red low, sage green in range, amber high
+  inRange: "#4E9F76",
+  high: "#D97706",
+  low: "#D32F2F",
   // treatment markers
-  insulin: "#0A84FF",
-  carbs: "#FF9F0A",
-  scrim: "rgba(0,0,0,0.55)",
+  insulin: "#E07A5F",
+  carbs: "#F4A261",
+  scrim: "rgba(28, 43, 45, 0.4)",
 };
 
 export type ThemeColors = typeof light;
 
 export const fonts = { display: "SpaceGrotesk", text: "PlusJakartaSans" };
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 };
-export const radius = { sm: 6, md: 12, lg: 20, pill: 999 };
+export const radius = { sm: 8, md: 14, lg: 22, pill: 999 };
 
 export const defaultScheme = "light" satisfies ColorScheme;
 

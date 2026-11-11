@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 6: GlucoGuard rename, cream/teal theme, change password, and per-contact test buttons. Backend: the new test_iter6_password_contact_test.py passes 16/16 and the full suite passes 107/107. Change-password results: 401 with no token; 400 'Current password is incorrect'; 400 'New password must be different'; 422 when the new password is under 8 characters or a field is missing; on success it returns {ok:true}, the old password then gets 401 and the new one logs in. The demo_user round trip worked and the password is back to demo12345 (re-checked). /emergency/test?phone=&channel= results: unknown phone gives 404 'Save this contact first, then send a test.'; a phone-SIM contact with sms only gives exactly one line ('handed to your phone'); call only gives 'Call ... failed: Twilio keys missing'; a cloud contact gives 400 Twilio; with no params every contact is tested as before; a bad channel gives 422; an unencoded '+' in the phone gives 404 (the frontend does encode it). Frontend at 390x844: login and the Home header show 'GlucoGuard'. Home, History, Stats and Settings use the cream background and teal buttons and are readable. The password sheet works: 3 secure inputs, and the empty / mismatch / too-short / wrong-current toasts appear. A successful change shows 'Password changed', closes the sheet and clears the fields; the password was then changed back through the UI. In the contact sheet the sms test button shows, and the call test button appears only once the call toggle is on. Tapping test with an empty phone shows a validation toast. With name and phone filled in, the contact is saved (title changes to 'Edit contact', it shows in the list, confirmed through the API) and the Twilio 400 toast appears. Two bugs found in the onTest flow (see ui_bugs). No deprecated Expo packages and no SafeAreaView-from-react-native imports found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/change-password", "issue": "Existing JWTs (they last 60 days) stay valid after a password change, so a stolen token survives the change. There is also no rate limit on wrong current-password attempts, while login has one (5 tries / 15 min)."},
+      {"endpoint": "GET /api/stats (compute_stats tir)", "issue": "Already in earlier rounds, seen now because demo_user has target_low=50/target_high=250. very_low (<54) and in_range (50..250) overlap, so values 50-53 are counted twice (95.2% + 5% = 100.2%). The 'low' bucket 54<=v<50 is always empty. The Stats labels read 'Low (54–49)' and 'High (251–250)'. Clamp the buckets: low = max(54, ...); in_range starts at max(target_low, 54)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ContactSheet onTest (new contact)", "issue": "settings.tsx:686 calls setEditing(list.length-1) BEFORE the PUT /settings finishes. While it is pending, contact = draft.em_contacts[n] is undefined, so ContactSheet's useEffect resets the form to fresh(). Name and phone go blank and the title goes back to 'Add contact', yet 'Remove contact' shows. Reproduced with a 2.5s PUT delay. If the PUT fails, the typed data is lost and `editing` points at a row that doesn't exist. Fix: call setEditing after setDraft (after the await), or pass the contact separately.", "testID": "contact-test-sms-button", "priority": "MEDIUM"},
+      {"component": "ContactSheet onTest duplicate phone", "issue": "The test buttons save the contact without the duplicate-phone check that onSave has (settings.tsx:696). Adding a new contact with an existing number and tapping 'Send test text' saved two contacts with +447700900777 (confirmed through the API). The backend doesn't reject duplicates either, and wants/em_sent are keyed by phone. Fix: run the same duplicate check in onTest, and ideally a 422 in PUT /settings.", "testID": "contact-test-sms-button", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login", "issues": ["The input fields (#FDFBF7) sit on a white card (#FFFFFF) with no border, so the field edges are nearly invisible.", "The 11px footer hint in muted #748C8E on cream is about 3.4:1 contrast, below 4.5:1 for small text."]},
+      {"screen": "Settings header", "issues": ["The disabled Save button is white text on pale teal (about 1.8:1) and barely readable. Consider a muted text color for the disabled state."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter6_password_contact_test.py", "/app/test_reports/pytest/pytest_iter6.xml", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "In settings.tsx onTest, move setEditing(list.length-1) to after the PUT succeeds (with setDraft), so the sheet form doesn't blank out or lose data if the PUT fails.",
+    "Apply the duplicate-phone check in onTest (same as onSave), and optionally reject duplicate em_contacts phones in PUT /api/settings.",
+    "Optional: invalidate older JWTs on password change (e.g. a pwd_changed_at / token version claim) and rate-limit wrong current-password attempts.",
+    "Optional: fix the TIR bucket overlap and labels when target_low < 54 or target_high >= 250.",
+    "Optional: give the login inputs a border or tertiary background, and use a readable disabled Save style."
+  ],
+  "critical_code_review_comments": [
+    "settings.tsx is 768 lines (more than 700); move the Emergency section and the ContactSheet onTest/onSave handlers into their own component.",
+    "change_password uses a compare-and-set on password_hash (409 on a race), which is good."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter6_password_contact_test.py (new)"],
+  "success_rate": {"backend": "100% (107/107)", "frontend": "All 5 requested flows work; 2 edge-case bugs in the contact test flow"},
+  "seed_data_creation": "pytest created throwaway TEST_it6_* / TEST_it6e_* users (there is no delete endpoint, so they stay in the DB). demo_user contacts TEST_Sis/TEST_Dup/TEST_One/TEST_Two were added through the UI, then reset to em_contacts=[]. demo_user's password was changed and then restored to demo12345 (login verified). Test SMS lines were added to demo_user's emergency_log. demo_user already had target_low=50/target_high=250; I did not change it.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "pytest.ini enables xdist. Run with -n 0 for the iter6 file, because its module fixture mutates the tmp user's password. Register returns 201. On web all contacts are cloud, so per-contact tests return 400 Twilio. To reproduce the blanking bug, delay PUT /api/settings with page.route. Wait about 1.3s after opening the sheets (slide animation)."
+}

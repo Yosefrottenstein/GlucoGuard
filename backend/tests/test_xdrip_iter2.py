@@ -183,7 +183,7 @@ class TestEmergencyV2:
     def test_emergency_test_still_returns_friendly_400_when_twilio_missing(self, api):
         r = api.post(f"{BASE_URL}/api/emergency/test")
         assert r.status_code == 400
-        assert "not set up" in r.json()["detail"].lower()
+        assert "twilio account" in r.json()["detail"].lower()
 
 
 # --------------- Sensor session ---------------

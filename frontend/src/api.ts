@@ -77,7 +77,10 @@ export type Stats = {
   max?: number;
   capture?: number;
   tir?: { very_low: number; low: number; in_range: number; high: number; very_high: number };
+  gri?: Gri;
+  bands?: { low: number; high: number };
 };
+export type Gri = { value: number; zone: "A" | "B" | "C" | "D" | "E"; hypo: number; hyper: number };
 
 export type TimeWindow = { days: number[]; start: string; end: string };
 export type ChannelSchedule = { enabled: boolean; mode: "default" | "always" | "hours"; windows: TimeWindow[]; repeat_minutes: number };
@@ -132,6 +135,10 @@ export type Settings = Thresholds & {
   em_triggers: ("urgent_low" | "low" | "high" | "urgent_high")[];
   em_delay_minutes: number;
   em_location: boolean;
+  twilio_sid: string;
+  twilio_token: string;
+  twilio_token_set: boolean;
+  twilio_from: string;
 };
 
 export async function api<T>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {

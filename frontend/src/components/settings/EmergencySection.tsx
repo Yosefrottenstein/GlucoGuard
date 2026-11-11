@@ -1,12 +1,15 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import type { UseMutationResult } from "@tanstack/react-query";
+import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 import type { ChannelSchedule, Settings } from "@/src/api";
 import { MultiChipRow } from "@/src/components/ChipRow";
 import { describeSchedule } from "@/src/components/ScheduleEditor";
+import { TwilioSheet } from "@/src/components/TwilioSheet";
 import { Button, Card, Field, Hint, SectionTitle, ToggleRow } from "@/src/components/ui";
 import { agoText } from "@/src/glucose";
+import { isAndroid } from "@/src/phoneSms";
 import { spacing, useTheme } from "@/src/theme";
 import { SetSetting, useSettingsStyles } from "./styles";
 
@@ -33,6 +36,12 @@ export function EmergencySection({
 }) {
   const styles = useSettingsStyles();
   const { colors } = useTheme();
+  const [twilioOpen, setTwilioOpen] = useState(false);
+  const hasTwilio = !!(draft.twilio_sid && draft.twilio_from && draft.twilio_token_set);
+  const needsTwilio = !isAndroid || draft.em_contacts.some((c) => c.call.enabled);
+  const twilioWhy = isAndroid
+    ? "Texts go from this phone's own number. Voice calls (a voice reads the alert and location) need your Twilio account."
+    : "iPhone can't send texts or make calls by itself, so emergency texts and calls go through your own Twilio account.";
 
   return (
     <>
@@ -45,9 +54,24 @@ export function EmergencySection({
           onChange={(v) => {
             set("em_enabled", v);
             if (v && draft.em_location) ensureLocation();
+            if (v && !isAndroid && !hasTwilio) setTwilioOpen(true);
           }}
           testID="emergency-enabled-toggle"
         />
+        <Pressable testID="emergency-twilio-row" onPress={() => setTwilioOpen(true)} style={[styles.contactRow, styles.bottomBorder]}>
+          <Ionicons name="cloud" size={22} color={hasTwilio ? colors.brandPrimary : needsTwilio ? colors.warning : colors.muted} />
+          <View style={{ flex: 1, paddingVertical: spacing.sm }}>
+            <Text style={styles.radioTitle}>Twilio account</Text>
+            <Text style={styles.radioSub} testID="emergency-twilio-status">
+              {hasTwilio
+                ? `Connected · ${draft.twilio_from}`
+                : isAndroid
+                  ? "Only needed for voice calls. Texts go from this phone."
+                  : "Needed for emergency texts and calls on iPhone"}
+            </Text>
+          </View>
+          <Text style={[styles.radioTitle, { color: colors.brandPrimary }]}>{hasTwilio ? "Edit" : "Add"}</Text>
+        </Pressable>
         <Field label="Your name" value={draft.em_name} onChangeText={(v) => set("em_name", v)} placeholder="Used in the message" autoCapitalize="words" testID="emergency-name-input" />
         <ToggleRow
           label="Include my location"
@@ -103,8 +127,25 @@ export function EmergencySection({
       <Button title="Send test message" kind="danger" onPress={() => emTest.mutate()} loading={emTest.isPending} testID="emergency-test-button" style={{ marginTop: spacing.sm }} />
       <Hint>
         While glucose stays at the same alarm level, each contact&apos;s texts and calls repeat at their own interval until you snooze. Messages
-        aren&apos;t sent while the demo sensor is selected. Calls and cloud texts go through Twilio, which charges per message.
+        aren&apos;t sent while the demo sensor is selected.{" "}
+        {isAndroid
+          ? "Texts go from this phone's number at your normal SMS rate; calls go through your Twilio account."
+          : "Texts and calls go through your Twilio account, which charges per message."}
       </Hint>
+      {twilioOpen && (
+        <TwilioSheet
+          visible
+          settings={draft}
+          why={twilioWhy}
+          onClose={() => setTwilioOpen(false)}
+          onSaved={(d) => {
+            // keep the unsaved page draft in sync so the main Save doesn't send old empty values
+            set("twilio_sid", d.twilio_sid);
+            set("twilio_from", d.twilio_from);
+            set("twilio_token_set", d.twilio_token_set);
+          }}
+        />
+      )}
       {log.slice(0, 3).map((l) => (
         <Text key={l.id} style={styles.logLine} testID="emergency-log-line">
           {l.test ? "Test" : "Alert"} · {agoText(l.ts)} · {l.results.join(", ")}

@@ -19,6 +19,8 @@ import { EmergencySection } from "@/src/components/settings/EmergencySection";
 import { useSettingsStyles } from "@/src/components/settings/styles";
 import { DexcomLoginFields, SecretKey, UploadsSection } from "@/src/components/settings/UploadsSection";
 import { ContactSheet } from "@/src/components/ContactSheet";
+import { PasswordSheet } from "@/src/components/PasswordSheet";
+import { EmailSheet, NO_EMAIL_WARNING } from "@/src/components/EmailPrompt";
 import { asTime, validTime } from "@/src/components/ScheduleEditor";
 import { useToast } from "@/src/components/Toast";
 import { Button, Card, Field, Hint, SectionTitle, ToggleRow } from "@/src/components/ui";
@@ -91,6 +93,9 @@ export default function SettingsScreen() {
   const [reminderEdit, setReminderEdit] = useState<{ index: number; value: Reminder } | null>(null);
   const [gaEdit, setGaEdit] = useState<{ index: number; value: GlucoseAlarm; text: string } | null>(null);
   const [startText, setStartText] = useState("");
+  const [pwOpen, setPwOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ username: string; email: string | null }>("/auth/me") });
 
   useEffect(() => {
     if (settings.data && !dirty) {
@@ -269,6 +274,17 @@ export default function SettingsScreen() {
             </Text>
             <Button title="Sign out" kind="secondary" onPress={signOut} testID="account-signout-button" />
           </View>
+          <Button title="Change password" kind="secondary" onPress={() => setPwOpen(true)} testID="account-password-button" style={{ marginVertical: spacing.sm }} />
+          <Pressable testID="account-email-row" onPress={() => setEmailOpen(true)} style={[styles.contactRow, styles.topBorder]}>
+            <Ionicons name="mail" size={22} color={me.data?.email ? colors.brandPrimary : colors.warning} />
+            <View style={{ flex: 1, paddingVertical: spacing.sm }}>
+              <Text style={styles.radioTitle}>Recovery email</Text>
+              <Text style={styles.radioSub} testID="account-email-text">
+                {me.data?.email ?? NO_EMAIL_WARNING}
+              </Text>
+            </View>
+            <Text style={[styles.radioTitle, { color: colors.brandPrimary }]}>{me.data?.email ? "Change" : "Add"}</Text>
+          </Pressable>
         </Card>
 
         <SectionTitle>Glucose unit</SectionTitle>
@@ -670,9 +686,26 @@ export default function SettingsScreen() {
         )}
       </Sheet>
 
+      <PasswordSheet visible={pwOpen} onClose={() => setPwOpen(false)} />
+      {emailOpen && <EmailSheet visible current={me.data?.email} onClose={() => setEmailOpen(false)} />}
       <ContactSheet
         visible={editing !== null}
         contact={editing !== null && editing >= 0 ? draft.em_contacts[editing] : null}
+        onTest={async (c, channel) => {
+          // save this contact as shown in the sheet, then test only it
+          if (draft.em_contacts.some((x, j) => x.phone === c.phone && j !== editing)) throw new Error("This phone number is already a contact");
+          const isNew = editing === null || editing < 0;
+          const list = [...draft.em_contacts];
+          if (isNew) list.push(c);
+          else list[editing] = c;
+          const data = await api<Settings>("/settings", { method: "PUT", body: { em_contacts: list } });
+          qc.setQueryData(["settings"], data);
+          setDraft((d) => (d ? { ...d, em_contacts: data.em_contacts } : d));
+          if (isNew) setEditing(data.em_contacts.length - 1);
+          const r = await api<{ results: string[] }>(`/emergency/test?phone=${encodeURIComponent(c.phone)}&channel=${channel}`, { method: "POST" });
+          qc.invalidateQueries({ queryKey: ["emergency-log"] });
+          return r.results.join(" · ") || "Nothing to send";
+        }}
         onSave={(c) => {
           if (draft.em_contacts.some((x, j) => x.phone === c.phone && j !== editing)) return toast("This phone number is already a contact", "error");
           const list = [...draft.em_contacts];

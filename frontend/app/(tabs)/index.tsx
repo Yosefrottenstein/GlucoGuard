@@ -115,7 +115,7 @@ export default function Home() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Text style={styles.brand}>xDrip</Text>
+        <Text style={styles.brand}>GlucoGuard</Text>
         <View style={styles.pill} testID="home-source-pill">
           <View style={[styles.dot, { backgroundColor: s.last_error ? colors.error : colors.success }]} />
           <Text style={styles.pillText}>

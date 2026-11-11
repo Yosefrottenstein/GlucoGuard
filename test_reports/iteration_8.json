@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 8: tested the user's own Twilio account, the location address in emergency texts and the 5+ character username rule. Backend: 12/12 pytest pass. The new Twilio fields are validated, the token is kept secret, a Twilio 401 shows up as a failure for that contact, cloud-only contacts with no Twilio get a 400 mentioning 'Twilio account', the SMS includes the address and maps link, and register rejects 'abcd'/'ab cde' and accepts 5 characters. Frontend (web, treated as iPhone): register placeholder and errors are correct; the Twilio row, the auto-open sheet, the bad-SID toast, the saved-token placeholder, the contact sheet wording and the per-contact test call all work. One CRITICAL integration bug: in the main flow the user asked for (turn on Emergency messages, then save Twilio in the sheet that opens), the row keeps saying 'Needed for…' instead of 'Connected', and tapping the main Save button sets twilio_sid and twilio_from back to '' on the server. No deprecated Expo packages found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/settings", "issue": "There is no way to remove a saved twilio_token: an empty value keeps it, and ' ' is saved as ' ', which still counts as set. The UI has no 'Remove Twilio account' option either."},
+      {"endpoint": "send_emergency (server.py:393)", "issue": "If the user's Twilio details are only partly filled in (for example sid and token but no from number), the server quietly uses the env TWILIO_* keys instead. No error is reported."},
+      {"endpoint": "build_message (server.py:346)", "issue": "When there is no address, the call says 'Their location has been sent to you by text message' even if texts are off for that contact or the text failed."},
+      {"endpoint": "logging", "issue": "twilio.http_client writes full request and response headers to the backend log at INFO level on every send. No secrets are leaked, but it is very noisy. Set logging.getLogger('twilio.http_client').setLevel(logging.WARNING)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Settings > Emergency messages > toggle on > TwilioSheet save > main Save", "issue": "CRITICAL. Turning on the toggle calls set(), which marks the page dirty. TwilioSheet then saves through its own PUT and qc.setQueryData, but settings.tsx only copies settings.data into draft when !dirty (line 101). So draft still has twilio_sid='' and twilio_from='', and the row still says 'Needed for emergency texts and calls on iPhone'. When the user taps the main Save, buildPatch spreads ...draft and PUTs twilio_sid='' and twilio_from='', which wipes the account that was just saved. Reproduced and confirmed in the DB (sid and from were '' after the main Save). Fix: give TwilioSheet an onSaved callback that does setDraft(d => ({...d, twilio_sid, twilio_from, twilio_token_set: true})), and/or remove twilio_sid, twilio_from and twilio_token from buildPatch.", "affected_testIDs": ["emergency-enabled-toggle", "twilio-save-button", "emergency-twilio-status", "settings-save-button"]},
+      {"flow": "Emergency toggle on (no location permission, no Twilio)", "issue": "The location permission sheet and the Twilio sheet open at the same time. The location sheet ends up hidden under the Twilio sheet, and a tap meant for 'Not now' landed on the Twilio Save button. Open them one after the other (location once the Twilio sheet closes, or the other way round).", "affected_testIDs": ["location-not-now-button", "twilio-sheet"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter8_twilio_user_location.py", "/app/backend/tests/check_twilio_state.py", "/app/test_reports/pytest/pytest_iter8.xml"],
+  "action_items": [
+    "CRITICAL: After a TwilioSheet save, update the settings draft with twilio_sid, twilio_from and twilio_token_set=true (or leave twilio_* out of buildPatch), so the row shows 'Connected' straight away and the main Save doesn't erase the Twilio account.",
+    "Open the location permission sheet and the Twilio sheet one after the other, not at the same time.",
+    "Optional: add a 'Remove Twilio account' option that can really clear twilio_token on the backend.",
+    "Optional: return an error when the user's Twilio details are only partly filled in, instead of quietly using the env keys.",
+    "Optional: set logging.getLogger('twilio.http_client') to WARNING.",
+    "Optional: ContactSheet line 60 resets sms_via to the current device's platform on every edit, so editing an Android 'phone' contact from an iPhone switches it to 'cloud'. Check this is what you want."
+  ],
+  "critical_code_review_comments": [
+    "settings.tsx stale draft: the draft only syncs when !dirty, while side sheets (TwilioSheet) write to the server directly. This is the same pattern that let the main Save overwrite the Twilio fields.",
+    "server.py is 840 lines, over the 700-line guideline. Consider moving emergency/Twilio into its own module.",
+    "The Twilio auth error text (HTTP 401 ... auth account AC... does not exist) is passed straight to the user. That is acceptable, but a friendlier message could help."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter8_twilio_user_location.py", "/app/backend/tests/check_twilio_state.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "~85% (all specified UI elements and texts correct; the Connected status after the toggle flow fails, and the main Save wipes Twilio)"},
+  "seed_data_creation": "Created a throwaway user t<4hex> (deleted in teardown). For demo_user: put TEST_ contacts, fake Twilio details and a TEST_ address in location state. Cleanup: set twilio_sid/from to '', em_contacts=[], em_enabled=false, and set twilio_token back to '' directly in Mongo, because the API can't clear it. demo_user's emergency_log has TEST entries and its location state now holds a TEST_ address; one sms_outbox item was marked failed ('TEST cleanup').",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Web counts as iPhone (isAndroid=false). There are no TWILIO_* env keys. Fake SID AC0123456789abcdef0123456789abcdef gets a real Twilio 401, which is the expected per-contact failure. When there is no Twilio account and no location permission, turning on the emergency toggle opens both sheets. On web, ContactSheet elements need element.scrollIntoView before a click.",
+  "rca_of_issue": "Reproduction: clear twilio_sid/from, log in as demo_user, go to Settings, turn on emergency-enabled-toggle, fill in a valid SID and number in twilio-sheet and save (the DB now has the sid). The row still shows 'Needed…'. Tap settings-save-button and the DB has twilio_sid=''. Cause: settings.tsx line 101 skips syncing the draft while dirty, and buildPatch (line 127) spreads the stale draft, including the twilio_* fields."
+}

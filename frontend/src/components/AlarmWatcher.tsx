@@ -34,7 +34,7 @@ export function AlarmWatcher() {
         notified.current = key;
         ensureChannel(style, cfg.sound).then((channelId) =>
           Notifications.scheduleNotificationAsync({
-            content: { title: alarm.label, body: "Open xDrip to snooze.", sound: style === "vibrate" ? false : `${cfg.sound}.wav`, data: { sound: style !== "vibrate" } },
+            content: { title: alarm.label, body: "Open GlucoGuard to snooze.", sound: style === "vibrate" ? false : `${cfg.sound}.wav`, data: { sound: style !== "vibrate" } },
             trigger: Platform.OS === "android" ? { channelId } : null,
           }),
         );

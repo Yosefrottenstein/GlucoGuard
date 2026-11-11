@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery } from "@tanstack/react-query";
 import { fetch as expoFetch } from "expo/fetch";
 import { Image } from "expo-image";
@@ -10,6 +11,7 @@ import { api, apiUrl } from "@/src/api";
 import { authHeaders } from "@/src/auth";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
+const RECAP_KEY = "recap-card-state";
 const BG =
   "https://images.unsplash.com/photo-1635776062360-af423602aff3?crop=entropy&cs=srgb&fm=jpg&ixlib=rb-4.1.0&q=85&w=900";
 
@@ -23,6 +25,14 @@ export function AISummaryCard({ start, end, label }: { start: Date; end: Date; l
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpenState] = useState(true);
+  useEffect(() => {
+    AsyncStorage.getItem(RECAP_KEY).then((v) => v === "closed" && setOpenState(false));
+  }, []);
+  const setOpen = (v: boolean) => {
+    setOpenState(v);
+    AsyncStorage.setItem(RECAP_KEY, v ? "open" : "closed");
+  };
 
   useEffect(() => {
     if (saved.data?.text && !busy) setText(saved.data.text);
@@ -30,6 +40,7 @@ export function AISummaryCard({ start, end, label }: { start: Date; end: Date; l
   }, [saved.data?.text]);
 
   const generate = async () => {
+    setOpen(true);
     setBusy(true);
     setError(null);
     setText("");
@@ -68,6 +79,16 @@ export function AISummaryCard({ start, end, label }: { start: Date; end: Date; l
     }
   };
 
+  if (!open) {
+    return (
+      <Pressable testID="ai-summary-show-button" onPress={() => setOpen(true)} style={styles.collapsed}>
+        <Ionicons name="sparkles" size={16} color={colors.brandPrimary} />
+        <Text style={styles.collapsedText}>Show daily recap</Text>
+        <Ionicons name="chevron-down" size={18} color={colors.muted} />
+      </Pressable>
+    );
+  }
+
   return (
     <View style={styles.card} testID="ai-summary-card">
       <Image source={{ uri: BG }} style={styles.bg} contentFit="cover" />
@@ -75,7 +96,10 @@ export function AISummaryCard({ start, end, label }: { start: Date; end: Date; l
       <View style={styles.inner}>
         <View style={styles.header}>
           <Ionicons name="sparkles" size={16} color={colors.onSurfaceInverse} />
-          <Text style={styles.title}>Daily recap</Text>
+          <Text style={[styles.title, { flex: 1 }]}>Daily recap</Text>
+          <Pressable testID="ai-summary-close-button" onPress={() => setOpen(false)} hitSlop={8} style={styles.close} accessibilityLabel="Close recap">
+            <Ionicons name="close" size={22} color={colors.onSurfaceInverse} />
+          </Pressable>
         </View>
         {text ? (
           <Text style={styles.body} testID="ai-summary-text">
@@ -112,6 +136,17 @@ const useStyles = makeStyles((c) => ({
   bg: { ...({ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } as const) },
   inner: { padding: spacing.lg, gap: spacing.md },
   header: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  close: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginVertical: -spacing.md, marginRight: -spacing.sm },
+  collapsed: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    minHeight: 52,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: c.brandTertiary,
+  },
+  collapsedText: { flex: 1, color: c.onBrandTertiary, fontFamily: fonts.text, fontSize: 15, fontWeight: "700" },
   title: { color: c.onSurfaceInverse, fontFamily: fonts.display, fontSize: 18, fontWeight: "700" },
   body: { color: c.onSurfaceInverse, fontFamily: fonts.text, fontSize: 15, lineHeight: 22 },
   error: { color: c.onSurfaceInverse, fontFamily: fonts.text, fontSize: 13, backgroundColor: c.error, padding: spacing.sm, borderRadius: radius.sm },

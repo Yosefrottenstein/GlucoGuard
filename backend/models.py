@@ -142,7 +142,7 @@ def default_alarm_sounds() -> dict:
     }
 
 
-SECRET_FIELDS = ("ns_secret", "dexcom_password", "libre_password", "tp_password")
+SECRET_FIELDS = ("ns_secret", "dexcom_password", "libre_password", "tp_password", "twilio_token")
 
 
 class AppSettings(BaseModel):
@@ -214,7 +214,16 @@ class AppSettings(BaseModel):
     em_triggers: list[Literal["urgent_low", "low", "high", "urgent_high"]] = ["urgent_low"]
     em_delay_minutes: int = Field(default=15, ge=0, le=240)
     em_location: bool = True
-
+    # The user's own Twilio account (iPhone texts + calls, Android calls)
+    twilio_sid: str = Field(default="", pattern=r"^(AC[0-9a-fA-F]{32})?$")
+    twilio_token: str = Field(default="", max_length=64)
+    twilio_from: str = Field(default="", pattern=r"^(\+\d{7,15})?$")
+    @model_validator(mode="after")
+    def _unique_contacts(self):
+        phones = [c.phone for c in self.em_contacts]
+        if len(phones) != len(set(phones)):
+            raise ValueError("Each emergency contact needs a different phone number")
+        return self
     @model_validator(mode="before")
     @classmethod
     def _contacts_own_channels(cls, data):
@@ -277,6 +286,7 @@ class TreatmentIn(BaseModel):
 class LocationIn(BaseModel):
     lat: float
     lon: float
+    address: str = Field(default="", max_length=200)
 
 
 class SmsResultIn(BaseModel):

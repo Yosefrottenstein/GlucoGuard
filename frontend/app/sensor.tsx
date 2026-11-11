@@ -182,7 +182,7 @@ export default function SensorScreen() {
           </Card>
         ) : phase === "blocked" ? (
           <Card testID="sensor-blocked-card">
-            <Text style={styles.cardTitle}>Bluetooth is turned off for xDrip</Text>
+            <Text style={styles.cardTitle}>Bluetooth is turned off for GlucoGuard</Text>
             <Text style={styles.body}>Allow Bluetooth in Settings so the app can talk to your sensor.</Text>
             <Button title="Open Settings" onPress={() => Linking.openSettings()} testID="sensor-open-settings-button" style={{ marginTop: spacing.md }} />
           </Card>

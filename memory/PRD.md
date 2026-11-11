@@ -52,3 +52,26 @@ tap a dot on the chart to see value + time, compatible with as many sensors as p
   (port of DiaBLE Libre2.swift) + factory calibration (src/libre2.ts, libreNfc.ts). Libre 3 / Gen2 2 Plus: explained not possible.
 - Nightscout/Tidepool/Dexcom upload sections: toggle first, fields appear when on. Settings split into src/components/settings/*.
 - Iteration 5: 91/91 backend tests, frontend flows pass.
+
+## Iteration 6 (2026-11-10)
+- Renamed to GlucoGuard; soft cream + teal palette (design_guidelines.json palette_v2 → src/theme.ts).
+- Change password: POST /api/auth/change-password (current + new), Settings > Account sheet (PasswordSheet.tsx).
+- Per-contact test: POST /api/emergency/test?phone=&channel=sms|call; buttons in contact sheet. Duplicate contact phones rejected (backend + UI).
+- G7 backfill: listens on BACKFILL characteristic (LoopKit G7BackfillMessage layout) to fill gaps; native build only.
+- AI recap card can be closed (✕) and reopened ("Show daily recap").
+- 107/107 backend tests. Twilio keys requested (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER).
+
+## Iteration 7
+- New usernames: 6+ chars, no spaces (login still accepts older short names).
+- Recovery email (Emergent managed Resend, email_service.py): asked right after sign-up (skippable with warning that password can't be recovered without it), editable in Settings > Account.
+- Forgot password: 6-digit code (bcrypt-hashed, 15 min, 5 attempts, 60 s resend limit) → /api/auth/forgot + /api/auth/reset.
+- Stats: Glycemia Risk Index card (GRI = 3.0·VLow + 2.4·Low + 1.6·VHigh + 0.8·High, zones A–E); time-in-range bands no longer overlap when targets are beyond 54/250.
+- AI recap open/closed state remembered (AsyncStorage).
+
+## Iteration 8
+- Usernames 5+ chars. Emergency: Android contacts always text from the phone's own number (sms_via=phone); iPhone always via
+  the user's OWN Twilio account (AppSettings.twilio_sid/twilio_token(secret)/twilio_from; env TWILIO_* only fallback).
+  Turning on Emergency messages on iPhone without Twilio opens TwilioSheet. Android needs Twilio only for voice calls.
+- Location reports include a reverse-geocoded street address; SMS shows address + map link, voice call speaks the address.
+- Stats bands clamped so they never cross. Duplicate /auth/me removed. 126/126 backend tests.
+- Open question from user: "companion app" mode (read glucose from other apps on the same phone).

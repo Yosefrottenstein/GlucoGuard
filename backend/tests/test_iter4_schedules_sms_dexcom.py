@@ -133,7 +133,7 @@ class TestEmergency:
             "enabled": True, "mode": "hours", "windows": [{"days": [today], "start": "00:00", "end": "00:00"}]})]})
         r = api.post(f"{BASE_URL}/api/emergency/test")
         assert r.status_code == 200, r.text
-        assert "Call to TEST_Mum failed: Twilio keys missing" in r.json()["results"]
+        assert "Call to TEST_Mum failed: add your Twilio account first" in r.json()["results"]
 
     def test_contact_channel_off_no_line(self, api):
         put(api, {"em_contacts": [ct(via="phone", sms={"enabled": False}, call={"enabled": True, "mode": "always"})]})

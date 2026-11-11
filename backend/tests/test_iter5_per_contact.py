@@ -125,7 +125,7 @@ class TestEmergency:
         assert not any("call" in x.lower() and "TEST_Mum" in x for x in res)  # disabled channel -> no line
         assert "No call to TEST_Dad (outside the set hours)" in res
         assert not any("text" in x.lower() and "TEST_Dad" in x for x in res)
-        assert "Call to TEST_Sis failed: Twilio keys missing" in res
+        assert "Call to TEST_Sis failed: add your Twilio account first" in res
         box = api.get(f"{BASE_URL}/api/sms/outbox").json()
         assert any(i["to"] == A["phone"] and i["body"].startswith("TEST") for i in box)
 

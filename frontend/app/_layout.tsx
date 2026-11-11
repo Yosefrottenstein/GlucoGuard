@@ -8,6 +8,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { AuthProvider, useAuth } from "@/src/auth";
 import { AlarmWatcher } from "@/src/components/AlarmWatcher";
 import { LoginScreen } from "@/src/components/LoginScreen";
+import { EmailPromptScreen } from "@/src/components/EmailPrompt";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { SensorCollector } from "@/src/components/SensorCollector";
 import { ToastProvider } from "@/src/components/Toast";
@@ -45,9 +46,10 @@ export default function RootLayout() {
 }
 
 function AuthGate() {
-  const { ready, signedIn } = useAuth();
+  const { ready, signedIn, needsEmail } = useAuth();
   if (!ready) return null;
   if (!signedIn) return <LoginScreen />;
+  if (needsEmail) return <EmailPromptScreen />;
   return (
     <>
       <SensorCollector />

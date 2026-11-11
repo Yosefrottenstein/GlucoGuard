@@ -18,7 +18,7 @@ export const SENSORS: Record<SensorType, { label: string; hint: string; match: (
   },
   dexcom_g7: {
     label: "Dexcom G7 / ONE+",
-    hint: "Keep the official Dexcom G7 app installed and running. It starts the sensor and handles its security; xDrip listens to the same sensor.",
+    hint: "Keep the official Dexcom G7 app installed and running. It starts the sensor and handles its security; GlucoGuard listens to the same sensor.",
     match: (n) => n.startsWith("DXCM"),
   },
   libre2: {

@@ -14,7 +14,11 @@ export function useLocationReporter(enabled: boolean) {
       if (!perm.granted || cancelled) return;
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null);
       if (pos && !cancelled) {
-        api("/location", { method: "POST", body: { lat: pos.coords.latitude, lon: pos.coords.longitude } }).catch(() => {});
+        // a street address so the voice call can say where you are (best effort)
+        const place = await Location.reverseGeocodeAsync(pos.coords).catch(() => []);
+        const p = place[0];
+        const address = p ? [p.name && p.name !== p.street ? p.name : null, [p.streetNumber, p.street].filter(Boolean).join(" "), p.city].filter(Boolean).join(", ") : "";
+        api("/location", { method: "POST", body: { lat: pos.coords.latitude, lon: pos.coords.longitude, address: address.slice(0, 200) } }).catch(() => {});
       }
     };
     report();

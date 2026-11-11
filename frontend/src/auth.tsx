@@ -21,14 +21,31 @@ export async function clearSession() {
   listeners.forEach((l) => l());
 }
 
-type Auth = { ready: boolean; signedIn: boolean; username: string; signIn: (t: string, u: string) => Promise<void>; signOut: () => Promise<void> };
-const AuthContext = createContext<Auth>({ ready: false, signedIn: false, username: "", signIn: async () => {}, signOut: async () => {} });
+type Auth = {
+  ready: boolean;
+  signedIn: boolean;
+  username: string;
+  needsEmail: boolean;
+  signIn: (t: string, u: string, opts?: { askEmail?: boolean }) => Promise<void>;
+  emailDone: () => void;
+  signOut: () => Promise<void>;
+};
+const AuthContext = createContext<Auth>({
+  ready: false,
+  signedIn: false,
+  username: "",
+  needsEmail: false,
+  signIn: async () => {},
+  emailDone: () => {},
+  signOut: async () => {},
+});
 export const useAuth = () => useContext(AuthContext);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [username, setUsername] = useState("");
+  const [needsEmail, setNeedsEmail] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -44,15 +61,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const signIn = useCallback(async (t: string, u: string) => {
+  const signIn = useCallback(async (t: string, u: string, opts?: { askEmail?: boolean }) => {
     token = t;
     await storage.secureSet(TOKEN_KEY, t);
     await storage.setItem(USER_KEY, u);
     setUsername(u);
+    setNeedsEmail(!!opts?.askEmail);
     setSignedIn(true);
   }, []);
+  const emailDone = useCallback(() => setNeedsEmail(false), []);
 
   return (
-    <AuthContext.Provider value={{ ready, signedIn, username, signIn, signOut: clearSession }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ ready, signedIn, username, needsEmail, signIn, emailDone, signOut: clearSession }}>{children}</AuthContext.Provider>
   );
 }

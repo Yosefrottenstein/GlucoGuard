@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, qs, Stats, Status } from "@/src/api";
 import { ChipRow } from "@/src/components/ChipRow";
 import { Card } from "@/src/components/ui";
+import { GriCard } from "@/src/components/GriCard";
 import { toDisplay, unitLabel } from "@/src/glucose";
 import { usesNativeTabs } from "@/src/navigation";
 import { sensorEndsText } from "@/src/sensorAlerts";
@@ -39,12 +40,18 @@ export default function StatsScreen() {
   const d = stats.data;
   const u = unitLabel(unit);
 
+  const lo = d?.bands?.low ?? Math.max(t?.target_low ?? 70, 54);
+  const hi = d?.bands?.high ?? Math.min(t?.target_high ?? 180, 250);
   const segments = d?.tir
     ? [
         { key: "very_high", label: `Very high (>${toDisplay(250, unit)})`, value: d.tir.very_high, color: colors.low },
-        { key: "high", label: `High (${toDisplay((t?.target_high ?? 180) + 1, unit)}–${toDisplay(250, unit)})`, value: d.tir.high, color: colors.high },
-        { key: "in_range", label: `In range (${toDisplay(t?.target_low ?? 70, unit)}–${toDisplay(t?.target_high ?? 180, unit)})`, value: d.tir.in_range, color: colors.inRange },
-        { key: "low", label: `Low (${toDisplay(54, unit)}–${toDisplay((t?.target_low ?? 70) - 1, unit)})`, value: d.tir.low, color: colors.warning },
+        ...(hi < 250
+          ? [{ key: "high", label: `High (${toDisplay(hi + 1, unit)}–${toDisplay(250, unit)})`, value: d.tir.high, color: colors.high }]
+          : []),
+        { key: "in_range", label: `In range (${toDisplay(lo, unit)}–${toDisplay(hi, unit)})`, value: d.tir.in_range, color: colors.inRange },
+        ...(lo > 54
+          ? [{ key: "low", label: `Low (${toDisplay(54, unit)}–${toDisplay(lo - 1, unit)})`, value: d.tir.low, color: colors.warning }]
+          : []),
         { key: "very_low", label: `Very low (<${toDisplay(54, unit)})`, value: d.tir.very_low, color: colors.low },
       ]
     : [];
@@ -110,6 +117,7 @@ export default function StatsScreen() {
               </View>
             </Card>
           </Animated.View>
+          {d.gri && <GriCard gri={d.gri} />}
           <Animated.View entering={FadeInDown.duration(350).delay(80)} style={styles.grid}>
             <Tile label="Average" value={toDisplay(d.average!, unit)} sub={u} testID="stats-average" />
             <Tile label="Median" value={toDisplay(d.median!, unit)} sub={u} testID="stats-median" />

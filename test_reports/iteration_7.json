@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 7 tested username rules, recovery email, forgot/reset password (real Emergent email send to delivered@resend.dev, 202 Accepted), GRI and non-overlapping TIR bands, and the AI recap closed state staying saved after reload. Backend: 19/19 pytest pass (run with -n 0). Frontend: every requested flow passed at 375x667: register hint and errors, email prompt save/skip with warning, Settings email row warning/add/change sheet, Stats GRI card (UI 31 = 3*5.7+2.4*3.2+0.8*7.3 = 30.6), Low and High rows hidden with target 50/260 (labels 'In range (54–250)'), recap collapsed after reload and reopen saved, and the full forgot -> code -> new password -> signed in flow. Only minor issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/stats", "issue": "Edge case: settings allow target_low up to 399 and target_high down to 41. If target_low > 250 (e.g. 260/300), bands = {low:260, high:250}, so low (54<=v<260) and very_high (>250) both count 251-259. Same if target_high < 54 (high and very_low overlap). Clamp lo to <=250 and hi to >=54, or reject such targets in PUT /settings."},
+      {"endpoint": "GET /api/auth/me", "issue": "Duplicate route: server.py:93-95 declares a second @auth_api.get('/me') returning {id, username}. It is shadowed by the auth.py one registered at line 87, so it is dead code. Remove it."},
+      {"endpoint": "POST /api/auth/reset", "issue": "The attempts check (>=5) and the $inc are not atomic, so parallel guesses can go past 5 attempts. Also no TTL index on password_resets.expires_at, so expired docs are never removed."},
+      {"endpoint": "POST /api/auth/reset", "issue": "Existing 60-day JWTs stay valid after a password reset or change (no token version or iat check). Consider invalidating old sessions."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Home / AISummaryCard", "issues": ["The recap state key 'recap-card-state' is shared by all accounts on the device, not per user. The card also shows open for a moment before AsyncStorage loads (state starts true)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter7_reset_gri.py", "/app/test_reports/pytest/pytest_iter7.xml"],
+  "action_items": [
+    "Clamp TIR bands so lo <= hi always (lo = min(max(target_low,54),250), hi = max(min(target_high,250),54)), or restrict target_low/target_high in PUT /settings",
+    "Remove the dead duplicate GET /api/auth/me handler in server.py:93-95",
+    "Optional: make the reset attempts check atomic (find_one_and_update with attempts<5), add a TTL index on password_resets.expires_at, and invalidate old JWTs after a password reset",
+    "Optional: key the recap state per user and start it unknown to avoid the brief open flash; keep needsEmail across restarts (it is in memory only, so killing the app right after sign-up skips the prompt)"
+  ],
+  "critical_code_review_comments": [
+    "The GRI formula is correct: 3.0*hypo + 1.6*hyper, with hypo = %<54 + 0.8*%54-69 and hyper = %>250 + 0.5*%181-250. Capped at 100; zones A-E at 20-point steps",
+    "Forgot gives the same message for unknown users and users without an email, so it doesn't reveal which accounts exist. The 60 s cooldown returns 429 (case-insensitive username)",
+    "The email template passes the safety checks; send_email maps provider errors to 503/502",
+    "settings.tsx (782 lines) and server.py (838 lines) are over 700 lines; consider splitting"
+  ],
+  "updated_files": ["/app/backend/tests/test_iter7_reset_gri.py"],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% (10/10 flows)"},
+  "seed_data_creation": "TEST_r*/TEST_n* users (pytest) and TEST_fe392322/TEST_fe938570 (UI) were created and then deleted by id/username, along with their readings, settings and reset docs. demo_user was not changed. resettest1 was not used for the reset (password unchanged).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run the iter7 tests serially: pytest tests/test_iter7_reset_gri.py -n 0 (xdist breaks the shared module user and the test order). The browser automation env has no pymongo/bcrypt. For a UI reset test, patch db.password_resets.code_hash from a setsid/nohup background loop during the run (plain & jobs are killed when the bash call ends). Sheets animate in, so wait about 2 s or use dispatch_event('click') on sheet buttons."
+}

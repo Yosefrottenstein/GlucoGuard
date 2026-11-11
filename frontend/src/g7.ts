@@ -95,6 +95,30 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 let subs: { remove: () => void }[] = [];
 let pending: { ts: string; sgv: number; direction: string }[] = [];
 let lastSequence = -1;
+let activatedAtMs = 0;
+
+// Backfill record (LoopKit G7BackfillMessage), sent when the Dexcom app asks the sensor for readings it missed:
+// 0-3: seconds since sensor start (24 bit) 4-5: glucose (12 bit) 6: algorithm state 7: flags 8: trend (signed, /10)
+export function parseG7Backfill(bytes: Uint8Array, activatedAt: number) {
+  if (bytes.length < 9 || !activatedAt) return null;
+  const secs = bytes[0] | (bytes[1] << 8) | (bytes[2] << 16);
+  const raw = bytes[4] | (bytes[5] << 8);
+  const glucose = raw & 0xfff;
+  if (bytes[6] !== 6 || raw === 0xffff || glucose < 39 || glucose > 401) return null;
+  const trend = bytes[8] === 0x7f ? null : ((bytes[8] << 24) >> 24) / 10;
+  return { ts: new Date(activatedAt + secs * 1000).toISOString(), sgv: glucose, direction: trendToDirection(trend) };
+}
+
+function onBackfill(b64: string | null | undefined) {
+  if (!b64) return;
+  const r = parseG7Backfill(fromBase64(b64), activatedAtMs);
+  if (!r || pending.some((p) => p.ts === r.ts)) return;
+  pending.push(r);
+  // backfill arrives as a quick burst; send it together
+  if (backfillTimer) clearTimeout(backfillTimer);
+  backfillTimer = setTimeout(flush, 3000);
+}
+let backfillTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function flush() {
   if (!pending.length) return;
@@ -114,6 +138,7 @@ function onControl(b64: string | null | undefined) {
   const msg = parseG7Glucose(fromBase64(b64), Date.now());
   if (!msg || msg.sequence === lastSequence) return;
   lastSequence = msg.sequence;
+  activatedAtMs = msg.activatedAt.getTime();
   setStatus({ sensorState: STATES[msg.algorithm] ?? `State ${msg.algorithm}` });
   activationHandler?.(msg.activatedAt);
   if (msg.sgv === null) return;
@@ -146,6 +171,7 @@ async function connect(id: string) {
       subs.push(
         device.monitorCharacteristicForService(G7.CGM, ch, (err: any, c: any) => {
           if (!err && ch === G7.CONTROL) onControl(c?.value);
+          if (!err && ch === G7.BACKFILL) onBackfill(c?.value);
         }),
       );
     }
@@ -168,7 +194,7 @@ async function loop(savedId?: string) {
   if (!running) return;
   const m = getManager();
   const state = await m.state();
-  if (state === "Unauthorized") setStatus({ state: "error", message: "Allow Bluetooth for xDrip in iPhone Settings" });
+  if (state === "Unauthorized") setStatus({ state: "error", message: "Allow Bluetooth for GlucoGuard in iPhone Settings" });
   else if (state !== "PoweredOn") setStatus({ state: "error", message: "Bluetooth is off" });
   else if (status.state !== "connected") {
     // Already connected by the Dexcom app? iOS lets us share that connection.

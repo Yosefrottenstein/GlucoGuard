@@ -312,7 +312,7 @@ async function loop(savedId?: string) {
   const state = await m.state();
   const sensor = await loadLibre2();
   if (!sensor) setStatus({ state: "error", message: "Scan your Libre sensor with NFC first (Pair sensor)" });
-  else if (state === "Unauthorized") setStatus({ state: "error", message: "Allow Bluetooth for xDrip in Settings" });
+  else if (state === "Unauthorized") setStatus({ state: "error", message: "Allow Bluetooth for GlucoGuard in Settings" });
   else if (state !== "PoweredOn") setStatus({ state: "error", message: "Bluetooth is off" });
   else if (status.state !== "connected") {
     setStatus({ state: "searching", message: "Searching for your Libre" });

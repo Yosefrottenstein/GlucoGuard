@@ -1,6 +1,7 @@
 """Username + password auth (JWT bearer) and per-user data scoping."""
 import os
 import re
+import secrets
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 
@@ -11,6 +12,8 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator
 
+from email_service import reset_code_email, send_email
+
 CURRENT_UID: ContextVar[str] = ContextVar("current_uid")
 JWT_DAYS = 60  # long-lived so alarms and background sync keep working on the phone
 ALGORITHM = "HS256"
@@ -18,17 +21,53 @@ DUMMY_HASH = bcrypt.hashpw(b"dummy-password-not-used", bcrypt.gensalt()).decode(
 bearer = HTTPBearer(auto_error=False)
 
 
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=72)
+    new_password: str = Field(min_length=8, max_length=72)
+
+
 class Credentials(BaseModel):
-    username: str = Field(min_length=3, max_length=32)
+    """Sign in: any existing username (older accounts may be shorter than today's rules)."""
+    username: str = Field(min_length=1, max_length=32)
+    password: str = Field(min_length=1, max_length=72)
+
+
+class Registration(BaseModel):
+    username: str = Field(max_length=32)
     password: str = Field(min_length=8, max_length=72)
 
     @field_validator("username")
     @classmethod
     def _valid(cls, v: str) -> str:
-        v = v.strip()
+        if re.search(r"\s", v):
+            raise ValueError("Username can't contain spaces")
+        if len(v) < 5:
+            raise ValueError("Username needs at least 5 characters")
         if not re.fullmatch(r"[A-Za-z0-9_.]+", v):
             raise ValueError("Username can use letters, numbers, dots and underscores")
         return v
+
+
+class EmailIn(BaseModel):
+    email: str = Field(max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def _valid(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", v):
+            raise ValueError("Enter a valid email address")
+        return v
+
+
+class ForgotIn(BaseModel):
+    username: str = Field(min_length=1, max_length=32)
+
+
+class ResetIn(BaseModel):
+    username: str = Field(min_length=1, max_length=32)
+    code: str = Field(pattern=r"^\d{6}$")
+    new_password: str = Field(min_length=8, max_length=72)
 
 
 class Scoped:
@@ -87,7 +126,7 @@ def setup(db):
         CURRENT_UID.set(str(user["_id"]))
         return user
 
-    async def register(body: Credentials):
+    async def register(body: Registration):
         try:
             res = await db.users.insert_one({
                 "username": body.username, "username_normalized": norm(body.username),
@@ -115,4 +154,56 @@ def setup(db):
         await db.login_attempts.delete_one({"_id": key})
         return {"access_token": token(str(user["_id"]), user["username"]), "username": user["username"]}
 
-    return current_user, register, login
+    async def change_password(body: PasswordChange, user: dict = Depends(current_user)):
+        if not bcrypt.checkpw(body.current_password.encode(), user["password_hash"].encode()):
+            raise HTTPException(400, "Current password is incorrect")
+        if body.current_password == body.new_password:
+            raise HTTPException(400, "New password must be different")
+        new_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt(12)).decode()
+        res = await db.users.update_one({"_id": user["_id"], "password_hash": user["password_hash"]},
+                                        {"$set": {"password_hash": new_hash}})
+        if res.matched_count != 1:
+            raise HTTPException(409, "Password was changed at the same time. Try again.")
+        return {"ok": True}
+
+    async def me(user: dict = Depends(current_user)):
+        return {"id": str(user["_id"]), "username": user["username"], "email": user.get("email")}
+
+    async def set_email(body: EmailIn, user: dict = Depends(current_user)):
+        await db.users.update_one({"_id": user["_id"]}, {"$set": {"email": body.email}})
+        return {"username": user["username"], "email": body.email}
+
+    generic = {"ok": True, "message": "If this account has an email, a 6-digit code is on its way."}
+
+    async def forgot(body: ForgotIn):
+        user = await db.users.find_one({"username_normalized": norm(body.username)})
+        if not user or not user.get("email"):
+            return generic  # don't reveal which accounts exist or have an email
+        now = datetime.now(timezone.utc)
+        row = await db.password_resets.find_one({"_id": user["_id"]})
+        if row and row["sent_at"].replace(tzinfo=timezone.utc) > now - timedelta(seconds=60):
+            raise HTTPException(429, "A code was just sent. Wait a minute before asking again.")
+        code = f"{secrets.randbelow(10**6):06d}"
+        await db.password_resets.update_one({"_id": user["_id"]}, {"$set": {
+            "code_hash": bcrypt.hashpw(code.encode(), bcrypt.gensalt()).decode(), "sent_at": now,
+            "expires_at": now + timedelta(minutes=15), "attempts": 0}}, upsert=True)
+        subject, html = reset_code_email(user["username"], code)
+        await send_email(to=user["email"], subject=subject, html=html)
+        return generic
+
+    async def reset(body: ResetIn):
+        bad = HTTPException(400, "That code is wrong or has expired. Ask for a new one.")
+        user = await db.users.find_one({"username_normalized": norm(body.username)})
+        row = await db.password_resets.find_one({"_id": user["_id"]}) if user else None
+        if not row or row["expires_at"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc) or row["attempts"] >= 5:
+            raise bad
+        if not bcrypt.checkpw(body.code.encode(), row["code_hash"].encode()):
+            await db.password_resets.update_one({"_id": user["_id"]}, {"$inc": {"attempts": 1}})
+            raise bad
+        await db.users.update_one({"_id": user["_id"]}, {"$set": {
+            "password_hash": bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt(12)).decode()}})
+        await db.password_resets.delete_one({"_id": user["_id"]})
+        await db.login_attempts.delete_many({"_id": {"$regex": f":{re.escape(norm(body.username))}$"}})
+        return {"access_token": token(str(user["_id"]), user["username"]), "username": user["username"]}
+
+    return current_user, register, login, change_password, me, set_email, forgot, reset

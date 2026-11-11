@@ -6,7 +6,7 @@ import statistics
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from xml.sax.saxutils import escape
 
 from dotenv import load_dotenv
@@ -29,6 +29,7 @@ from uploads import upload_dexcom_share, upload_nightscout, upload_tidepool  # n
 client = AsyncIOMotorClient(os.environ["MONGO_URL"], tz_aware=True)
 db = client[os.environ["DB_NAME"]]
 logger = logging.getLogger("xdrip")
+logging.getLogger("twilio.http_client").setLevel(logging.WARNING)  # it logs every request otherwise
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 INDEXES: dict[str, list[IndexModel]] = {
@@ -79,15 +80,15 @@ class _UDB:
 
 
 udb = _UDB()
-current_user, auth_register, auth_login = auth_setup(db)
+current_user, auth_register, auth_login, auth_change_password, auth_me, auth_email, auth_forgot, auth_reset = auth_setup(db)
 auth_api = APIRouter(prefix="/api/auth")
 auth_api.post("/register", status_code=201)(auth_register)
 auth_api.post("/login")(auth_login)
-
-
-@auth_api.get("/me")
-async def me(user=Depends(current_user)):
-    return {"id": str(user["_id"]), "username": user["username"]}
+auth_api.post("/change-password")(auth_change_password)
+auth_api.get("/me")(auth_me)
+auth_api.put("/email")(auth_email)
+auth_api.post("/forgot")(auth_forgot)
+auth_api.post("/reset")(auth_reset)
 
 
 api = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
@@ -334,17 +335,21 @@ async def build_message(s: AppSettings, reading: Optional[Reading], test: bool, 
         glucose = f"glucose is {val}{', ' + trend if trend else ''} ({mins} min ago)"
     else:
         glucose = "glucose is unknown"
-    loc_text = ""
+    loc_text = loc_speech = ""
     if s.em_location:
         loc = await get_state("location")
         if loc.get("lat") is not None:
             age = int((now_utc() - loc["ts"]).total_seconds() // 60)
-            loc_text = f" Location ({age} min ago): https://maps.google.com/?q={loc['lat']:.5f},{loc['lon']:.5f}"
+            addr = loc.get("address") or ""
+            loc_text = (f" Location ({age} min ago): {addr + ' - ' if addr else ''}"
+                        f"https://maps.google.com/?q={loc['lat']:.5f},{loc['lon']:.5f}")
+            loc_speech = f" Their last known location, {age} minutes ago, was {addr}." if addr else ""
     prefix = "TEST - " if test else "EMERGENCY: "
     word = LEVEL_WORDS.get(level, "glucose")
     sms = f"{prefix}{who}'s {glucose}. The {word} glucose alarm was not acknowledged.{loc_text}"
     speech = (f"{'This is a test. ' if test else 'Emergency alert. '}{who}'s {glucose}. "
-              f"The {word} glucose alarm was not acknowledged. Please check on them now.")
+              f"The {word} glucose alarm was not acknowledged.{loc_speech} Please check on them now.")
+    speech = speech.replace("mg/dL", "milligrams per deciliter").replace("mmol/L", "millimoles per liter").replace(" min ago", " minutes ago")
     return sms, speech
 
 
@@ -385,7 +390,12 @@ async def send_emergency(s: AppSettings, reading: Optional[Reading], test: bool,
     """due = {contact phone: {"sms", "call"}}; None sends every enabled channel to every contact (test)."""
     if not s.em_contacts:
         raise HTTPException(400, "Add at least one emergency contact first.")
-    sid, token, sender = (os.environ.get(k) for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"))
+    own = (s.twilio_sid, s.twilio_token, s.twilio_from)
+    if any(own) and not all(own):
+        sid = token = sender = None  # half-filled account: don't silently fall back to someone else's
+    else:
+        sid, token, sender = (own if all(own)
+                              else (os.environ.get(k) for k in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER")))
     wants = {c.phone: (due.get(c.phone, set()) if due is not None else {"sms", "call"}) for c in s.em_contacts}
     now_local = local_now(s)
     needs_cloud = any((channel_active(s, c, "call", now_local)[0] and "call" in wants[c.phone]) or
@@ -396,7 +406,7 @@ async def send_emergency(s: AppSettings, reading: Optional[Reading], test: bool,
         from twilio.rest import Client
         tw = Client(sid, token)
     elif needs_cloud and all(c.sms_via == "cloud" for c in s.em_contacts):
-        raise HTTPException(400, "Text and call service is not set up yet (Twilio keys missing).")
+        raise HTTPException(400, "Add your Twilio account in Settings > Emergency messages first.")
     sms, speech = await build_message(s, reading, test, level)
     results = []
     for c in s.em_contacts:
@@ -409,7 +419,7 @@ async def send_emergency(s: AppSettings, reading: Optional[Reading], test: bool,
             await udb.sms_outbox.insert_one({"to": c.phone, "name": c.name, "body": sms, "ts": now_utc(), "status": "pending"})
             results.append(f"Text to {c.name} handed to your phone")
         elif sms_on and not tw:
-            results.append(f"Text to {c.name} failed: Twilio keys missing")
+            results.append(f"Text to {c.name} failed: add your Twilio account first")
         elif sms_on:
             try:
                 await asyncio.to_thread(tw.messages.create, to=c.phone, from_=sender, body=sms)
@@ -419,7 +429,7 @@ async def send_emergency(s: AppSettings, reading: Optional[Reading], test: bool,
         elif test and "sms" in want and sms_why != "off for this contact":
             results.append(f"No text to {c.name} ({sms_why})")
         if call_on and not tw:
-            results.append(f"Call to {c.name} failed: Twilio keys missing")
+            results.append(f"Call to {c.name} failed: add your Twilio account first")
         elif call_on:
             twiml = f'<Response><Say loop="3">{escape(speech)}</Say></Response>'
             try:
@@ -601,16 +611,27 @@ async def compute_stats(start: datetime, end: datetime, s: AppSettings) -> dict:
     sd = statistics.pstdev(vals) if n > 1 else 0.0
     pct = lambda c: round(100 * c / n, 1)  # noqa: E731
     expected = max(1.0, (min(end, now_utc()) - start).total_seconds() / 300)
+    # bands never overlap: very low stays <54 and very high >250 even if targets are set beyond them
+    lo, hi = min(max(s.target_low, 54), 250), max(min(s.target_high, 250), 54)
+    lo = min(lo, hi)
+    # Glycemia Risk Index (Klonoff et al. 2022): standard bands, lows weighted most
+    p = lambda f: 100 * sum(f(v) for v in vals) / n  # noqa: E731
+    vlow, low, high, vhigh = p(lambda v: v < 54), p(lambda v: 54 <= v < 70), p(lambda v: 180 < v <= 250), p(lambda v: v > 250)
+    hypo, hyper = vlow + 0.8 * low, vhigh + 0.5 * high
+    gri = min(100.0, 3.0 * hypo + 1.6 * hyper)
     return {
         "count": n, "average": round(avg, 1), "median": statistics.median(vals), "sd": round(sd, 1),
         "cv": round(100 * sd / avg, 1) if avg else 0, "gmi": round(3.31 + 0.02392 * avg, 1),
         "a1c": round((avg + 46.7) / 28.7, 1), "min": min(vals), "max": max(vals),
         "capture": min(100.0, round(100 * n / expected, 1)),
+        "gri": {"value": round(gri), "zone": "ABCDE"[min(4, int(max(gri - 0.001, 0) // 20))],
+                "hypo": round(min(100.0, hypo), 1), "hyper": round(min(100.0, hyper), 1)},
+        "bands": {"low": lo, "high": hi},
         "tir": {
             "very_low": pct(sum(v < 54 for v in vals)),
-            "low": pct(sum(54 <= v < s.target_low for v in vals)),
-            "in_range": pct(sum(s.target_low <= v <= s.target_high for v in vals)),
-            "high": pct(sum(s.target_high < v <= 250 for v in vals)),
+            "low": pct(sum(54 <= v < lo for v in vals)),
+            "in_range": pct(sum(lo <= v <= hi for v in vals)),
+            "high": pct(sum(hi < v <= 250 for v in vals)),
             "very_high": pct(sum(v > 250 for v in vals)),
         },
     }
@@ -666,14 +687,23 @@ async def ack_alarm(body: AckIn):
 
 @api.post("/location")
 async def report_location(body: LocationIn):
-    await set_state("location", {"lat": body.lat, "lon": body.lon, "ts": now_utc()})
+    await set_state("location", {"lat": body.lat, "lon": body.lon, "address": body.address.strip(), "ts": now_utc()})
     return {"ok": True}
 
 
 @api.post("/emergency/test")
-async def emergency_test():
+async def emergency_test(phone: Optional[str] = None, channel: Optional[Literal["sms", "call"]] = None):
+    """Test everyone, or one contact (phone) and optionally only its text or call."""
     s = await get_settings()
-    results = await send_emergency(s, await latest_reading(), test=True)
+    if phone:
+        contact = next((c for c in s.em_contacts if c.phone == phone), None)
+        if not contact:
+            raise HTTPException(404, "Save this contact first, then send a test.")
+        s = s.model_copy(update={"em_contacts": [contact]})
+        results = await send_emergency(s, await latest_reading(), test=True,
+                                       due={phone: {channel} if channel else {"sms", "call"}})
+    else:
+        results = await send_emergency(s, await latest_reading(), test=True)
     return {"results": results}
 
 

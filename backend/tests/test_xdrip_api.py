@@ -169,7 +169,7 @@ class TestAlarmLocationEmergency:
         })
         r = api.post(f"{BASE_URL}/api/emergency/test")
         assert r.status_code == 400
-        assert "not set up" in r.json().get("detail", "").lower()
+        assert "twilio account" in r.json().get("detail", "").lower()
 
     def test_emergency_log(self, api):
         r = api.get(f"{BASE_URL}/api/emergency/log")
