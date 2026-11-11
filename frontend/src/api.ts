@@ -27,7 +27,7 @@ export type Reminder = {
 };
 
 export type Unit = "mgdl" | "mmol";
-export type Source = "demo" | "manual" | "bluetooth" | "companion" | "nightscout" | "dexcom" | "libre";
+export type Source = "demo" | "manual" | "bluetooth" | "companion" | "health" | "nightscout" | "dexcom" | "libre" | "twiist" | "carelink" | "glooko";
 export type SensorType = "dexcom_g6" | "dexcom_g7" | "libre2" | "libre3";
 
 export type Reading = { ts: string; sgv: number; direction: string };
@@ -123,6 +123,20 @@ export type Settings = Thresholds & {
   libre_email: string;
   libre_password: string;
   libre_password_set: boolean;
+  twiist_username: string;
+  twiist_password: string;
+  twiist_password_set: boolean;
+  cl_username: string;
+  cl_password: string;
+  cl_password_set: boolean;
+  cl_server: "EU" | "US";
+  cl_country: string;
+  cl_patient: string;
+  cl_refresh_token_set: boolean;
+  glooko_email: string;
+  glooko_password: string;
+  glooko_password_set: boolean;
+  glooko_region: "US" | "EU" | "CA" | "DE-FR";
   tp_email: string;
   tp_password: string;
   tp_password_set: boolean;

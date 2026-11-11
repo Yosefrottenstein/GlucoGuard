@@ -20,7 +20,7 @@ CREATED = []
 
 
 def _register(username, password="password1"):
-    r = requests.post(f"{API}/auth/register", json={"username": username, "password": password}, timeout=30)
+    r = requests.post(f"{API}/auth/register", json={"username": username, "password": password, "name": "Test User"}, timeout=30)
     if r.status_code == 201:
         CREATED.append(username)
     return r

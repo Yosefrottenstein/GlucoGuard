@@ -72,7 +72,6 @@ export function EmergencySection({
           </View>
           <Text style={[styles.radioTitle, { color: colors.brandPrimary }]}>{hasTwilio ? "Edit" : "Add"}</Text>
         </Pressable>
-        <Field label="Your name" value={draft.em_name} onChangeText={(v) => set("em_name", v)} placeholder="Used in the message" autoCapitalize="words" testID="emergency-name-input" />
         <ToggleRow
           label="Include my location"
           sub="Adds a map link to the text"

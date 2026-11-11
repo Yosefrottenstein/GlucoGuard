@@ -7,7 +7,14 @@ import { Button, Card, Field, Hint, SectionTitle, ToggleRow } from "@/src/compon
 import { spacing } from "@/src/theme";
 import { SetSetting, useSettingsStyles } from "./styles";
 
-export type SecretKey = "ns_secret" | "dexcom_password" | "libre_password" | "tp_password";
+export type SecretKey =
+  | "ns_secret"
+  | "dexcom_password"
+  | "libre_password"
+  | "tp_password"
+  | "twiist_password"
+  | "cl_password"
+  | "glooko_password";
 type Upload = UseMutationResult<any, Error, void, unknown>;
 
 export function DexcomLoginFields({

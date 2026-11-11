@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 import statistics
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Literal, Optional
 from xml.sax.saxutils import escape
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -21,9 +23,10 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 from auth import CURRENT_UID, Credentials, Scoped, setup as auth_setup  # noqa: E402
-from models import (SECRET_FIELDS, AckIn, AppSettings, EmergencyLog, LocationIn, Reading,  # noqa: E402
-                    ReadingBatchIn, ReadingIn, SmsResultIn, SummaryIn, Treatment, TreatmentIn)
-from sources import demo_readings, direction_from_slope, fetch_source, reset_sessions  # noqa: E402
+from models import (SECRET_FIELDS, AckIn, AppSettings, CareLinkFinishIn, CareLinkStartIn, EmergencyLog,  # noqa: E402
+                    LocationIn, Reading, ReadingBatchIn, ReadingIn, SmsResultIn, SummaryIn, Treatment, TreatmentIn)
+from sources import CLOUD_SOURCES, demo_readings, direction_from_slope, fetch_source, reset_sessions  # noqa: E402
+import cloud_followers  # noqa: E402
 from uploads import upload_dexcom_share, upload_nightscout, upload_tidepool  # noqa: E402
 
 client = AsyncIOMotorClient(os.environ["MONGO_URL"], tz_aware=True)
@@ -128,6 +131,10 @@ async def latest_reading() -> Optional[Reading]:
     return Reading.from_mongo(await udb.readings.find_one({}, sort=[("ts", -1)]))
 
 
+async def save_settings_fields(**fields) -> None:
+    await db.settings.update_one({"_id": CURRENT_UID.get()}, {"$set": fields})
+
+
 # ---------------- sync loop ----------------
 async def sync_once(force: bool = False) -> dict:
     s = await get_settings()
@@ -140,12 +147,20 @@ async def sync_once(force: bool = False) -> dict:
         if s.source == "demo":
             after = last.ts if last else now - timedelta(days=HISTORY_DAYS)
             added = await insert_readings(demo_readings(after, now), "demo")
-        elif s.source in ("nightscout", "dexcom", "libre"):
+        elif s.source in CLOUD_SOURCES:
             last_fetch = sync.get("last_fetch")
-            if force or not last_fetch or now - last_fetch >= timedelta(minutes=2):
-                since = last.ts if last else now - timedelta(days=1)
-                added = await insert_readings(await fetch_source(s, since), s.source)
+            fails = sync.get("fails") or 0
+            wait = timedelta(minutes=min(30, 2 * 2 ** fails))  # back off after failed logins: 2, 4, 8 … 30 min
+            if force or not last_fetch or now - last_fetch >= wait:
                 await set_state("sync", {"last_fetch": now})
+                since = last.ts if last else now - timedelta(days=1)
+                try:
+                    added = await insert_readings(await fetch_source(s, since, save_settings_fields), s.source)
+                except Exception:
+                    await set_state("sync", {"fails": min(fails + 1, 5)})
+                    raise
+                if fails:
+                    await set_state("sync", {"fails": 0})
     except Exception as exc:
         error = str(exc)[:300]
         logger.warning("source sync failed: %s", error)
@@ -462,8 +477,8 @@ async def update_settings(patch: dict):
     for k, v in patch.items():
         if k not in data:
             continue
-        if k in SECRET_FIELDS and not v:
-            continue  # empty means keep the saved secret
+        if k == "cl_refresh_token" or (k in SECRET_FIELDS and not v):
+            continue  # server-managed token; empty secret means keep the saved one
         data[k] = v
     try:
         new = AppSettings.model_validate(data)
@@ -479,12 +494,63 @@ async def update_settings(patch: dict):
         reset_sessions()
         if current.source == "demo":
             await udb.readings.delete_many({"source": "demo"})
-        await set_state("sync", {"last_fetch": None, "last_error": None})
+        await set_state("sync", {"last_fetch": None, "last_error": None, "fails": 0})
         await set_state("alarm", {"type": None, "started_at": None, "emergency_sent_at": None})
-    if new.source != current.source or any(patch.get(k) for k in SECRET_FIELDS) or new.ns_url != current.ns_url:
+    logins = ("ns_url", "twiist_username", "cl_username", "cl_server", "glooko_email", "glooko_region")
+    if new.source != current.source or any(patch.get(k) for k in SECRET_FIELDS) or any(
+            getattr(new, k) != getattr(current, k) for k in logins):
         reset_sessions()
         asyncio.create_task(sync_once(force=True))
     return new.public()
+
+
+@api.post("/carelink/start")
+async def carelink_start(body: CareLinkStartIn):
+    """Medtronic sign-in page for the phone (handles the 'not a robot' check); the phone hands the code back."""
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": cloud_followers.CL_UA}) as c:
+        try:
+            sso = await cloud_followers.cl_sso(c, body.server)
+        except Exception:
+            raise HTTPException(502, "CareLink sign-in is unavailable right now. Try again in a minute.")
+    verifier, challenge = cloud_followers.pkce()
+    state = secrets.token_hex(16)
+    await set_state("cl_auth", {"state": state, "verifier": verifier, "server": body.server, "at": now_utc()})
+    return {"url": cloud_followers.cl_authorize_url(sso, challenge, state), "redirect_uri": sso["redirect_uri"], "state": state}
+
+
+@api.post("/carelink/finish")
+async def carelink_finish(body: CareLinkFinishIn):
+    st = await get_state("cl_auth")
+    if not st.get("state") or not secrets.compare_digest(st["state"], body.state) or now_utc() - st["at"] > timedelta(minutes=20):
+        raise HTTPException(400, "This sign-in has expired. Please start again.")
+    await set_state("cl_auth", {"state": None, "verifier": None})
+    async with httpx.AsyncClient(timeout=20, headers={"User-Agent": cloud_followers.CL_UA}) as c:
+        try:
+            sso = await cloud_followers.cl_sso(c, st["server"])
+            tok = await cloud_followers.cl_exchange(c, sso, body.code, st["verifier"])
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception:
+            raise HTTPException(502, "CareLink sign-in is unavailable right now. Try again in a minute.")
+        username = ""
+        with suppress(Exception):
+            r = await c.get(f"https://{cloud_followers.CL_HOST[st['server']]}/patient/users/me",
+                            headers={"Authorization": f"Bearer {tok['access_token']}"})
+            username = (r.json().get("username") if r.status_code == 200 else "") or ""
+    fields = {"cl_refresh_token": tok["refresh_token"], "cl_server": st["server"], "source": "carelink"}
+    if username:
+        fields["cl_username"] = username
+    await save_settings_fields(**fields)
+    reset_sessions()
+    asyncio.create_task(sync_once(force=True))
+    return {"ok": True, "username": username}
+
+
+@api.delete("/carelink")
+async def carelink_sign_out():
+    await save_settings_fields(cl_refresh_token="", cl_password="")
+    reset_sessions()
+    return {"ok": True}
 
 
 @api.get("/status")

@@ -42,6 +42,47 @@ export async function enableHealthUpload() {
 
 export const disableHealthUpload = () => AsyncStorage.setItem(ON_KEY, "off");
 
+// ---------- Apple Health as a data source (backup) ----------
+const READ_KEY = "health-read-last";
+
+export async function enableHealthRead() {
+  const h = lib();
+  if (!h) throw new Error("Apple Health works in the installed iPhone app, not in Expo Go or the preview.");
+  await h.requestAuthorization({ toRead: ["HKQuantityTypeIdentifierBloodGlucose"] });
+  await readHealth();
+}
+
+let reading = false;
+/** Imports glucose other apps (Dexcom, Libre…) saved to Apple Health; skips GlucoGuard's own samples. */
+export async function readHealth() {
+  const h = lib();
+  if (!h || reading) return 0;
+  reading = true;
+  try {
+    const since = new Date(Math.max(Date.parse((await AsyncStorage.getItem(READ_KEY)) ?? "") || 0, Date.now() - 24 * 3600000));
+    const samples = await h.queryQuantitySamples("HKQuantityTypeIdentifierBloodGlucose", {
+      limit: -1,
+      ascending: true,
+      unit: "mg/dL",
+      filter: { date: { startDate: since } },
+    });
+    const own = (s: any) => /glucoguard|frontend/i.test(s?.sourceRevision?.source?.name ?? "") || /glucoguard|frontend/i.test(s?.sourceRevision?.source?.bundleIdentifier ?? "");
+    const rows = samples
+      .filter((s) => !own(s) && s.startDate.getTime() > since.getTime())
+      .map((s) => ({ ts: s.startDate.toISOString(), sgv: Math.round(s.quantity), direction: "NONE" }))
+      .filter((r) => r.sgv >= 39 && r.sgv <= 401);
+    if (rows.length) {
+      await api("/readings/batch", { method: "POST", body: { readings: rows, source: "health" } });
+      await AsyncStorage.setItem(READ_KEY, rows[rows.length - 1].ts);
+    }
+    return rows.length;
+  } catch {
+    return 0;
+  } finally {
+    reading = false;
+  }
+}
+
 let busy = false;
 export async function syncHealth() {
   const h = lib();

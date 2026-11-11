@@ -40,7 +40,7 @@ def _outside_window():
 
 def _new_user(prefix):
     s = requests.Session()
-    creds = {"username": f"TEST_{prefix}_{uuid.uuid4().hex[:8]}", "password": "testpass123"}
+    creds = {"username": f"TEST_{prefix}_{uuid.uuid4().hex[:8]}", "password": "testpass123", "name": "Test User"}
     r = s.post(f"{BASE_URL}/api/auth/register", json=creds)
     assert r.status_code in (200, 201), r.text
     tok = r.json().get("access_token") or s.post(f"{BASE_URL}/api/auth/login", json=creds).json()["access_token"]

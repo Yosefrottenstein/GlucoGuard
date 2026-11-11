@@ -26,7 +26,7 @@ CONTACT = {"name": "TEST_Mum", "phone": "+447700900123"}
 def api():
     # fresh throwaway user so demo_user settings are never touched
     s = requests.Session()
-    creds = {"username": f"TEST_it4_{uuid.uuid4().hex[:8]}", "password": "testpass123"}
+    creds = {"username": f"TEST_it4_{uuid.uuid4().hex[:8]}", "password": "testpass123", "name": "Test User"}
     r = s.post(f"{BASE_URL}/api/auth/register", json=creds)
     assert r.status_code in (200, 201), r.text
     tok = r.json().get("access_token") or s.post(f"{BASE_URL}/api/auth/login", json=creds).json()["access_token"]

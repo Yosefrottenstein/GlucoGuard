@@ -35,6 +35,16 @@ class Credentials(BaseModel):
 class Registration(BaseModel):
     username: str = Field(max_length=32)
     password: str = Field(min_length=8, max_length=72)
+    # shown in emergency texts and calls ("Anna's glucose is ...")
+    name: str = Field(default="", max_length=40, validate_default=True)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if len(v) < 3:
+            raise ValueError("Name needs at least 3 characters")
+        return v
 
     @field_validator("username")
     @classmethod
@@ -136,6 +146,7 @@ def setup(db):
             if "duplicate" in str(exc).lower():
                 raise HTTPException(409, "That username is taken")
             raise
+        await db.settings.update_one({"_id": str(res.inserted_id)}, {"$set": {"em_name": body.name}}, upsert=True)
         return {"access_token": token(str(res.inserted_id), body.username), "username": body.username}
 
     async def login(body: Credentials, request: Request):

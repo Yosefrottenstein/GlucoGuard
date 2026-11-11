@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 import httpx
 
+from cloud_followers import fetch_carelink, fetch_glooko, fetch_twiist, reset_cloud_sessions
+from auth import CURRENT_UID
 from models import AppSettings
 
 DIRECTIONS = ["NONE", "DoubleUp", "SingleUp", "FortyFiveUp", "Flat", "FortyFiveDown",
@@ -95,7 +97,7 @@ async def _dexcom_login(c: httpx.AsyncClient, s: AppSettings) -> str:
     if r.status_code != 200:
         raise RuntimeError("Dexcom login failed.")
     session = r.json()
-    _dexcom_session.update({"key": (s.dexcom_username, s.dexcom_region), "id": session})
+    _dexcom_session.update({"key": (CURRENT_UID.get(None), s.dexcom_username, s.dexcom_region), "id": session})
     return session
 
 
@@ -103,7 +105,7 @@ async def fetch_dexcom(s: AppSettings, since: datetime) -> list[dict]:
     base, _ = DEXCOM[s.dexcom_region]
     minutes = int(min(1440, max(10, (datetime.now(timezone.utc) - since).total_seconds() / 60 + 5)))
     async with httpx.AsyncClient(timeout=20) as c:
-        session = _dexcom_session.get("id") if _dexcom_session.get("key") == (s.dexcom_username, s.dexcom_region) else None
+        session = _dexcom_session.get("id") if _dexcom_session.get("key") == (CURRENT_UID.get(None), s.dexcom_username, s.dexcom_region) else None
         if not session:
             session = await _dexcom_login(c, s)
         params = {"minutes": minutes, "maxCount": 288}
@@ -140,7 +142,7 @@ async def _llu_login(c: httpx.AsyncClient, s: AppSettings) -> None:
             continue
         if d.get("status") != 0 or "authTicket" not in data:
             raise RuntimeError("LibreLinkUp login failed. Check email/password and accept terms in the LibreLinkUp app.")
-        _llu.update({"key": s.libre_email, "base": base, "token": data["authTicket"]["token"],
+        _llu.update({"key": (CURRENT_UID.get(None), s.libre_email), "base": base, "token": data["authTicket"]["token"],
                      "account": hashlib.sha256(data["user"]["id"].encode()).hexdigest()})
         return
     raise RuntimeError("LibreLinkUp region redirect failed.")
@@ -152,7 +154,7 @@ def _llu_ts(item: dict) -> datetime:
 
 async def fetch_libre(s: AppSettings, since: datetime) -> list[dict]:
     async with httpx.AsyncClient(timeout=20) as c:
-        if _llu.get("key") != s.libre_email:
+        if _llu.get("key") != (CURRENT_UID.get(None), s.libre_email):
             await _llu_login(c, s)
 
         def h():
@@ -179,7 +181,14 @@ async def fetch_libre(s: AppSettings, since: datetime) -> list[dict]:
     return [o for o in out if o["ts"] > since]
 
 
-async def fetch_source(s: AppSettings, since: datetime) -> list[dict]:
+async def _no_save(**_kw) -> None:
+    return None
+
+
+CLOUD_SOURCES = ("nightscout", "dexcom", "libre", "twiist", "carelink", "glooko")
+
+
+async def fetch_source(s: AppSettings, since: datetime, save=_no_save) -> list[dict]:
     if s.source == "nightscout":
         if not s.ns_url:
             raise RuntimeError("Add your Nightscout URL in Settings.")
@@ -192,9 +201,22 @@ async def fetch_source(s: AppSettings, since: datetime) -> list[dict]:
         if not (s.libre_email and s.libre_password):
             raise RuntimeError("Add your LibreLinkUp login in Settings.")
         return await fetch_libre(s, since)
+    if s.source == "twiist":
+        if not (s.twiist_username and s.twiist_password):
+            raise RuntimeError("Add your twiist follower login in Settings.")
+        return await fetch_twiist(s, since)
+    if s.source == "carelink":
+        if not (s.cl_refresh_token or (s.cl_username and s.cl_password)):
+            raise RuntimeError("Sign in to CareLink in Settings.")
+        return await fetch_carelink(s, since, save)
+    if s.source == "glooko":
+        if not (s.glooko_email and s.glooko_password):
+            raise RuntimeError("Add your Glooko / Omnipod DISCOVER login in Settings.")
+        return await fetch_glooko(s, since)
     return []
 
 
 def reset_sessions() -> None:
     _dexcom_session.clear()
     _llu.clear()
+    reset_cloud_sessions()

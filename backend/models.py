@@ -142,12 +142,14 @@ def default_alarm_sounds() -> dict:
     }
 
 
-SECRET_FIELDS = ("ns_secret", "dexcom_password", "libre_password", "tp_password", "twilio_token")
+SECRET_FIELDS = ("ns_secret", "dexcom_password", "libre_password", "tp_password", "twilio_token",
+                 "twiist_password", "cl_password", "cl_refresh_token", "glooko_password")
 
 
 class AppSettings(BaseModel):
     unit: Literal["mgdl", "mmol"] = "mgdl"
-    source: Literal["demo", "manual", "bluetooth", "companion", "nightscout", "dexcom", "libre"] = "demo"
+    source: Literal["demo", "manual", "bluetooth", "companion", "health", "nightscout", "dexcom", "libre",
+                    "twiist", "carelink", "glooko"] = "demo"
     # Master mode: direct Bluetooth sensor
     bt_sensor: Literal["dexcom_g6", "dexcom_g7", "libre2", "libre3"] = "dexcom_g6"
     bt_transmitter_id: str = ""
@@ -201,6 +203,20 @@ class AppSettings(BaseModel):
     # LibreLinkUp
     libre_email: str = ""
     libre_password: str = ""
+    # twiist Insight follower login (made at mytwiistportal.com)
+    twiist_username: str = ""
+    twiist_password: str = ""
+    # Medtronic CareLink (care partner or patient); refresh token is kept by the server after sign-in
+    cl_username: str = ""
+    cl_password: str = ""
+    cl_server: Literal["EU", "US"] = "EU"
+    cl_country: str = Field(default="gb", pattern=r"^[a-z]{2}$")
+    cl_patient: str = ""
+    cl_refresh_token: str = ""
+    # Glooko / Omnipod DISCOVER
+    glooko_email: str = ""
+    glooko_password: str = ""
+    glooko_region: Literal["US", "EU", "CA", "DE-FR"] = "US"
     # Tidepool
     tp_email: str = ""
     tp_password: str = ""
@@ -273,7 +289,7 @@ class ReadingBatchItem(BaseModel):
 
 class ReadingBatchIn(BaseModel):
     readings: list[ReadingBatchItem] = Field(max_length=2000)
-    source: Literal["bluetooth", "companion"] = "bluetooth"
+    source: Literal["bluetooth", "companion", "health"] = "bluetooth"
 
 
 class TreatmentIn(BaseModel):
@@ -297,6 +313,15 @@ class SmsResultIn(BaseModel):
 
 class AckIn(BaseModel):
     minutes: Optional[int] = Field(default=None, ge=5, le=720)
+
+
+class CareLinkStartIn(BaseModel):
+    server: Literal["EU", "US"] = "EU"
+
+
+class CareLinkFinishIn(BaseModel):
+    code: str = Field(min_length=4, max_length=4000)
+    state: str = Field(min_length=8, max_length=64)
 
 
 class SummaryIn(BaseModel):

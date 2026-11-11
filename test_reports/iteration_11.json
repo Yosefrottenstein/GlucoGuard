@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 11 tested the twiist Insight, Medtronic CareLink and Omnipod DISCOVER/Glooko follower sources. Backend: the new pytest file passes 22/22 and calls the real vendor endpoints with fake logins. PUT /settings accepts all the new fields, rejects bad values with 422 (cl_server ASIA, cl_country GB/gbr, glooko_region UK, unknown source) and hides secrets (blank values plus *_set flags). Sending an empty secret keeps the saved one. POST /sync errors are friendly: 'twiist login failed. Check the follower email and password.', 'Glooko login failed. Check email, password and region.', 'Sign in to CareLink in Settings.' with no login, and the CareLink CAPTCHA message for a fake password (one attempt only). POST /carelink/start EU returns a carelink-login.minimed.eu/authorize URL with PKCE S256, redirect_uri 'com.medtronic.carepartner:/sso' and a 32-hex state. Server XX gives 422, no token gives 401. /carelink/finish gives 400 'expired' for a wrong state and 400 'CareLink sign-in could not be completed' for a fake code; the state works only once. DELETE /carelink clears the refresh token and password. Unit checks of twiist_glucose, carelink_readings (pump offset, kind/zero filter, last trend) and glooko_readings (Europe/Berlin to UTC, x100 values, soft_deleted, bad tz falls back to UTC) pass. Full regression: 179/180 pass. The one failure is iter7 forgot/429, caused by a 502 and a Resend 429 rate limit; it is unrelated and flaky. Frontend (375x667 web, throwaway user TEST_uicf11): the Follower list shows the 3 new rows. Each row opens its card. twiist and Glooko save, the password shows 'Saved ••••••', and the sync status shows the friendly error after Sync now. CareLink region chips, country cleaning ('D3e!x' becomes 'de'), patient field and save all work. carelink-signin-button opens a full-screen carelink-login-modal with the 'Open page in browser' fallback, which opens carelink-login.minimed.com/u/login. Close works. The signed-in state shows 'Signed in as ...', 'Sign in again' and the sign-out button; sign out shows a toast and returns to 'Not signed in'. demo_user was never touched (source 'demo'). No deprecated Expo packages found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "sync_once / sync_loop (server.py:150-156)", "issue": "last_fetch is only set after a successful fetch, so the 2-minute limit does not apply to failures. A wrong twiist/Glooko/CareLink login is retried every 60 s loop, forever. Logs show repeated vendor login calls. Repeated Cognito/Auth0 failures can lock vendor accounts, and CareLink password logins hit Medtronic rate limits and CAPTCHA. Fix: set last_fetch (or a back-off) on failures too, especially for login errors."},
+      {"endpoint": "cloud_followers._tokens cache (cloud_followers.py:50,202,333)", "issue": "Cached tokens are keyed by vendor username/email only (CareLink falls back to the key 'token'), not by app user or password, and the cache is shared by all app users. A second app user who types the same twiist username or Glooko email with ANY password gets the first user's cached token and data. CareLink users with an empty cl_username share the key ('carelink','token',server). Fix: include the app uid (CURRENT_UID) in the key."},
+      {"endpoint": "PUT /api/settings (server.py:485-495)", "issue": "reset_sessions() clears the token caches for ALL users (and Dexcom/LLU) whenever ANY user changes source or logins. Every other user then has to log in again, which means extra CareLink password logins and CAPTCHA. Fix: clear only the current user's entries."},
+      {"endpoint": "CareLink refresh token handling (cloud_followers.py:206-219)", "issue": "If the refresh token is rejected but a password is saved, the bad refresh token is never cleared. The UI keeps showing 'Signed in as X' while sync fails with the CAPTCHA message (confirmed in the UI). Clear cl_refresh_token on a 4xx refresh response."},
+      {"endpoint": "POST /api/carelink/finish (server.py:519-527)", "issue": "Only RuntimeError is caught. If cl_sso fails (httpx error / raise_for_status) or the token endpoint returns non-JSON (r.json() in cl_exchange), the endpoint returns 500 instead of a friendly 400/502."},
+      {"endpoint": "PUT /api/settings", "issue": "The client can write cl_refresh_token directly (it is in SECRET_FIELDS and accepted in the patch). It is meant to be server-managed; consider ignoring it in PUT."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CareLink sign-in status", "issue": "Shows 'Signed in as <typed username>' when only a (possibly rejected) refresh token exists, while the sync status at the same time says Medtronic wants a 'not a robot' check. Confusing; this is the backend refresh-token issue.", "testID": "carelink-signin-status", "priority": "LOW"},
+      {"component": "CareLink Patient field label", "issue": "The backend error says \"Type the one to follow in 'Patient username'\", but the field label is 'Patient'. Make the two match.", "testID": "carelink-patient-input", "priority": "LOW"},
+      {"component": "Settings sync status after Save", "issue": "Right after saving the twiist login the status said 'No readings yet' for several seconds. The background sync had already stored last_error, but /status is not fetched again after the async sync finishes; it only updates after Sync now or the next poll.", "testID": "settings-sync-status", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings > Glooko card", "issues": ["The region chips scroll sideways at 375px: 'Canada' is fully off-screen with no hint that it exists. Consider wrapping the chips."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter11_cloud_followers.py", "/app/test_reports/pytest/iter11.xml", "/app/test_reports/pytest/iter11_full.xml"],
+  "action_items": [
+    "Add a back-off on sync failures (set last_fetch or an error back-off) so bad twiist/Glooko/CareLink logins are not retried every 60 s.",
+    "Include the app user id in the cloud_followers._tokens keys (and in the Dexcom/LLU session caches) so users cannot reuse each other's tokens.",
+    "Make reset_sessions per-user instead of global.",
+    "Clear cl_refresh_token when the refresh grant returns 4xx, even if a password is saved.",
+    "Catch httpx/JSON errors in /carelink/finish and return a friendly 400/502 instead of 500.",
+    "Optional: label the field 'Patient username'; wrap the Glooko region chips; refetch /status a few seconds after Save."
+  ],
+  "critical_code_review_comments": [
+    "settings.tsx is 820 lines (over 700); the new CloudFollowerFields extraction helps, but the file should be split further.",
+    "Global, process-level token caches (cloud_followers._tokens, sources._dexcom_session, sources._llu) are not safe for multiple users. _dexcom_session and _llu hold only one account each, so two users on Dexcom/LLU keep logging each other out.",
+    "httpx INFO logs print full request URLs, including the Glooko patient code and CareLink state; consider setting the httpx logger to WARNING."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter11_cloud_followers.py (new)"],
+  "success_rate": {"backend": "100% (22/22 new); regression 179/180 (1 unrelated flaky Resend/502 failure in iter7)", "frontend": "100% of requested flows"},
+  "seed_data_creation": "Created TEST_cf<ts> (pytest fixture, deleted on teardown) and TEST_uicf11 (UI user, deleted by id with all its collections). Deleted by ObjectId the 8 TEST_ users my regression run created (TEST_it4/5/6*). 275 older TEST_ users from earlier iterations are still in the DB; I did not touch them. demo_user was never changed (source still 'demo').",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use pytest -n0. Do the cloud-source UI tests with a throwaway user, not demo_user: switching away from 'demo' deletes the demo readings. The sync loop runs every 60 s and immediately clears a fake cl_refresh_token when no cl_password is saved. To see the signed-in UI, set both a fake cl_refresh_token and a fake cl_password in the DB (this costs one CareLink password attempt per minute, so sign out quickly). Real CareLink password login always returns the CAPTCHA message from this server. The iter7 forgot tests are flaky because of Resend rate limits (429) and ingress 502.",
+  "rca_of_issue": "Repeated vendor login attempts: sync_once only writes last_fetch after a successful fetch_source, so on any exception the next 60 s loop sees an old or empty last_fetch and calls the vendor again. Cross-user token reuse: _tokens is a module-level dict keyed by (service, vendor username), without the app uid or password."
+}

@@ -127,7 +127,7 @@ def test_register_4_chars_422():
 
 def test_register_5_chars_201():
     name = "t" + uuid.uuid4().hex[:4]
-    r = requests.post(f"{API}/auth/register", json={"username": name, "password": "password1"}, timeout=30)
+    r = requests.post(f"{API}/auth/register", json={"username": name, "password": "password1", "name": "Test User"}, timeout=30)
     assert r.status_code == 201, r.text
     CREATED_USERS.append(name)
     assert r.json()["username"] == name and r.json()["access_token"]

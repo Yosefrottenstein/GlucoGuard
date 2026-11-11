@@ -25,5 +25,10 @@ class CompanionGlucoseModule : Module() {
     Function("drain") { GlucoseNotificationService.drain(ctx) }
 
     Function("lastSource") { GlucoseNotificationService.lastPackage(ctx) }
+
+    Function("configure") { baseUrl: String, token: String ->
+      ctx.getSharedPreferences("companion_glucose", android.content.Context.MODE_PRIVATE).edit()
+        .putString("base_url", baseUrl).putString("token", token).apply()
+    }
   }
 }

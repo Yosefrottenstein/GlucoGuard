@@ -14,14 +14,15 @@ import { usesNativeTabs } from "@/src/navigation";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 const PERIODS = [
-  { value: "1", label: "Day" },
-  { value: "3", label: "3 days" },
-  { value: "7", label: "7 days" },
-  { value: "30", label: "30 days" },
-  { value: "90", label: "90 days" },
+  { value: "1", label: "Day to Date" },
+  { value: "7", label: "By 7 days" },
+  { value: "30", label: "By 30 days" },
+  { value: "90", label: "By 90 days" },
 ] as const;
 type Period = (typeof PERIODS)[number]["value"];
-const BUCKET: Record<Period, number> = { "1": 0, "3": 0, "7": 15, "30": 60, "90": 180 };
+const BUCKET: Record<Period, number> = { "1": 0, "7": 15, "30": 60, "90": 180 };
+// how far back each view can step: 90 days, 12 weeks, 3 months, just the last 90 days
+const MAX_OFFSET: Record<Period, number> = { "1": 89, "7": 11, "30": 2, "90": 0 };
 
 type Row = { key: string; ts: string; reading?: Reading; treatment?: Treatment };
 
@@ -35,12 +36,11 @@ export default function History() {
 
   const status = useQuery({ queryKey: ["status"], queryFn: () => api<Status>("/status") });
   const { start, end } = useMemo(() => {
-    if (period === "1") {
-      const d = addDays(new Date(), -dayOffset);
-      return { start: startOfDay(d), end: isToday(d) ? new Date() : endOfDay(d) };
-    }
-    return { start: startOfDay(addDays(new Date(), -(Number(period) - 1))), end: new Date() };
+    const n = Number(period);
+    const last = addDays(new Date(), -n * dayOffset);
+    return { start: startOfDay(addDays(last, -(n - 1))), end: isToday(last) ? new Date() : endOfDay(last) };
   }, [period, dayOffset]);
+  const maxOffset = MAX_OFFSET[period];
 
   const range = { start: start.toISOString(), end: end.toISOString() };
   const readings = useQuery({
@@ -65,7 +65,14 @@ export default function History() {
     return [...t, ...r].sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
   }, [treatments.data, readings.data, period]);
 
-  const dayLabel = dayOffset === 0 ? "Today" : dayOffset === 1 ? "Yesterday" : format(start, "EEE, MMM d");
+  const dayLabel =
+    period === "1"
+      ? dayOffset === 0
+        ? "Today"
+        : dayOffset === 1
+          ? "Yesterday"
+          : format(start, "EEE, MMM d")
+      : `${format(start, "MMM d")} – ${dayOffset === 0 ? "Today" : format(end, "MMM d")}`;
 
   const header = (
     <View style={{ gap: spacing.md }}>
@@ -78,7 +85,7 @@ export default function History() {
           <GlucoseChart
             testID="history-glucose-chart"
             readings={readings.data ?? []}
-            treatments={period === "1" || period === "3" ? treatments.data : []}
+            treatments={period === "1" ? treatments.data : []}
             start={start.getTime()}
             end={period === "1" ? endOfDay(start).getTime() : end.getTime()}
             thresholds={thresholds}
@@ -114,15 +121,15 @@ export default function History() {
           }}
           testIDPrefix="history-period"
         />
-        {period === "1" && (
+        {maxOffset > 0 ? (
           <View style={styles.dayNav}>
             <Pressable
               testID="history-prev-day"
-              disabled={dayOffset >= 89}
-              onPress={() => setDayOffset((d) => Math.min(89, d + 1))}
+              disabled={dayOffset >= maxOffset}
+              onPress={() => setDayOffset((d) => Math.min(maxOffset, d + 1))}
               style={styles.navBtn}
             >
-              <Ionicons name="chevron-back" size={22} color={dayOffset >= 89 ? colors.borderStrong : colors.onSurface} />
+              <Ionicons name="chevron-back" size={22} color={dayOffset >= maxOffset ? colors.borderStrong : colors.onSurface} />
             </Pressable>
             <Text style={styles.dayLabel} testID="history-day-label">
               {dayLabel}
@@ -136,6 +143,10 @@ export default function History() {
               <Ionicons name="chevron-forward" size={22} color={dayOffset === 0 ? colors.borderStrong : colors.onSurface} />
             </Pressable>
           </View>
+        ) : (
+          <Text style={[styles.dayLabel, { textAlign: "center", paddingVertical: spacing.sm }]} testID="history-day-label">
+            {dayLabel}
+          </Text>
         )}
       </View>
       <FlatList

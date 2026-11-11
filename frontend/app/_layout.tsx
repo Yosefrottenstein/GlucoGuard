@@ -14,6 +14,11 @@ import { ErrorBoundary } from "@/src/components/error-boundary";
 import { SensorCollector } from "@/src/components/SensorCollector";
 import { ToastProvider } from "@/src/components/Toast";
 import { queryClient } from "@/src/query-client";
+import { loadAppearance } from "@/src/appearance";
+import { useTheme } from "@/src/theme";
+import { StatusBar } from "expo-status-bar";
+
+loadAppearance();
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.
@@ -48,15 +53,18 @@ export default function RootLayout() {
 
 function AuthGate() {
   const { ready, signedIn, needsEmail } = useAuth();
+  const { scheme, colors } = useTheme();
+  const bar = <StatusBar style={scheme === "dark" ? "light" : "dark"} />;
   if (!ready) return null;
-  if (!signedIn) return <LoginScreen />;
-  if (needsEmail) return <EmailPromptScreen />;
+  if (!signedIn) return <>{bar}<LoginScreen /></>;
+  if (needsEmail) return <>{bar}<EmailPromptScreen /></>;
   return (
     <>
+      {bar}
       <SensorCollector />
       <AlarmWatcher />
       <EmailReminder />
-      <Stack screenOptions={{ headerShown: false }} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }} />
     </>
   );
 }

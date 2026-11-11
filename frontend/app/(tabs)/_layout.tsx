@@ -28,12 +28,16 @@ export default function TabsLayout() {
           <NativeTabs.Trigger.Icon sf="gearshape.fill" />
           <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
         </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="profile">
+          <NativeTabs.Trigger.Icon sf="person.crop.circle.fill" />
+          <NativeTabs.Trigger.Label>Profile</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
       </NativeTabs>
     );
   }
 
   const icon =
-    (name: "water" | "time" | "stats-chart" | "settings") =>
+    (name: "water" | "time" | "stats-chart" | "settings" | "person-circle") =>
     ({ color, size }: { color: ColorValue; size: number }) => <Ionicons name={name} size={size} color={color} />;
 
   return (
@@ -55,6 +59,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="history" options={{ title: "History", tabBarIcon: icon("time"), tabBarButtonTestID: "tab-history" }} />
       <Tabs.Screen name="stats" options={{ title: "Stats", tabBarIcon: icon("stats-chart"), tabBarButtonTestID: "tab-stats" }} />
       <Tabs.Screen name="settings" options={{ title: "Settings", tabBarIcon: icon("settings"), tabBarButtonTestID: "tab-settings" }} />
+      <Tabs.Screen name="profile" options={{ title: "Profile", tabBarIcon: icon("person-circle"), tabBarButtonTestID: "tab-profile" }} />
     </Tabs>
   );
 }

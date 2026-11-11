@@ -18,6 +18,7 @@ export function LoginScreen() {
   const { signIn } = useAuth();
   const [mode, setMode] = useState<Mode>("login");
   const [username, setUsername] = useState("");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [code, setCode] = useState("");
@@ -60,6 +61,7 @@ export function LoginScreen() {
       if (/\s/.test(username)) return setError("Username can't contain spaces.");
       if (u.length < 5) return setError("Username needs at least 5 characters.");
       if (!/^[A-Za-z0-9_.]+$/.test(u)) return setError("Username can use letters, numbers, dots and underscores.");
+      if (name.replace(/\s+/g, " ").trim().length < 3) return setError("Enter your name (at least 3 characters).");
     } else if (!u) return setError("Enter your username.");
     if (mode === "forgot") {
       return run(async () => {
@@ -76,7 +78,13 @@ export function LoginScreen() {
       if (mode === "reset") {
         await finish(await api("/auth/reset", { method: "POST", body: { username: u, code, new_password: password } }));
       } else {
-        await finish(await api(`/auth/${mode}`, { method: "POST", body: { username: u, password } }), mode === "register");
+        await finish(
+          await api(`/auth/${mode}`, {
+            method: "POST",
+            body: mode === "register" ? { username: u, password, name: name.replace(/\s+/g, " ").trim() } : { username: u, password },
+          }),
+          mode === "register",
+        );
       }
     });
   };
@@ -111,6 +119,20 @@ export function LoginScreen() {
             style={styles.input}
           />
           {mode === "register" && <Text style={styles.hint}>At least 5 characters. Letters, numbers, dots or underscores, no spaces.</Text>}
+          {mode === "register" && (
+            <>
+              <TextInput
+                testID="auth-name-input"
+                value={name}
+                onChangeText={setName}
+                placeholder="Your name (3+ characters)"
+                placeholderTextColor={colors.muted}
+                autoCapitalize="words"
+                style={styles.input}
+              />
+              <Text style={styles.hint}>{`Used in emergency messages: "${name.trim() || "Name"}'s glucose is…"`}</Text>
+            </>
+          )}
           {info ? (
             <Text style={styles.info} testID="auth-info">
               {info}

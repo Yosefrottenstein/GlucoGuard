@@ -45,7 +45,7 @@ def raw():
 class TestRegister:
     def test_register_success(self, raw):
         uname = _rand("TEST_reg")
-        r = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname, "password": "pw12345678"})
+        r = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname, "password": "pw12345678", "name": "Test User"})
         assert r.status_code == 201, r.text
         data = r.json()
         assert data["username"] == uname
@@ -53,9 +53,9 @@ class TestRegister:
 
     def test_register_duplicate_case_insensitive(self, raw):
         uname = _rand("TEST_dup")
-        r1 = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname, "password": "pw12345678"})
+        r1 = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname, "password": "pw12345678", "name": "Test User"})
         assert r1.status_code == 201
-        r2 = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname.upper(), "password": "pw12345678"})
+        r2 = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname.upper(), "password": "pw12345678", "name": "Test User"})
         assert r2.status_code == 409, r2.text
 
     def test_register_short_username(self, raw):
@@ -73,7 +73,7 @@ class TestLogin:
     def creds(self, raw):
         uname = _rand("TEST_login")
         pw = "pw12345678"
-        r = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname, "password": pw})
+        r = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname, "password": pw, "name": "Test User"})
         assert r.status_code == 201
         return {"username": uname, "password": pw, "user_id": None}
 
@@ -124,7 +124,7 @@ class TestProtected:
 # ---------------- Data isolation ----------------
 def _register(raw, prefix):
     uname = _rand(prefix)
-    r = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname, "password": "pw12345678"})
+    r = raw.post(f"{BASE_URL}/api/auth/register", json={"username": uname, "password": "pw12345678", "name": "Test User"})
     assert r.status_code == 201, r.text
     return uname, r.json()["access_token"]
 

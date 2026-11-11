@@ -43,7 +43,8 @@ export function CompanionCard() {
       <Text style={[styles.radioSub, { marginBottom: spacing.sm }]}>
         Works with apps that show glucose in their notification: Dexcom G6/G7/ONE+, FreeStyle Libre 2/3, Omnipod 5, CamAPS FX, Eversense,
         Medtrum, Beta Bionics, twiist and more. Keep that app&apos;s glucose notification turned on. GlucoGuard only reads notifications from
-        these apps. Keep GlucoGuard open or running in the background so readings, alarms and emergency messages stay up to date.
+        these apps. Readings are uploaded straight from the background, so alarms on the server and emergency messages keep working while
+        GlucoGuard is closed.
       </Text>
     </Card>
   );

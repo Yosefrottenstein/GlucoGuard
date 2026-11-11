@@ -85,3 +85,22 @@ tap a dot on the chart to see value + time, compatible with as many sensors as p
   (src/health.ts, HealthCard). Device-level toggle in AsyncStorage. Native build only.
 - Recovery email reminder sheet on each app start if no email (EmailReminder.tsx), not right after skipping at sign-up.
 - Disconnect Twilio: DELETE /api/twilio + button in TwilioSheet.
+
+## Iteration 10
+- Register asks for a name (3+ chars) → settings.em_name (used in emergency texts/calls). Profile tab (app/(tabs)/profile.tsx):
+  initial-letter avatar, name edit, username, recovery email, change password, sign out. Account card removed from Settings.
+- Dark mode: themes.dark palette in src/theme.ts + Appearance pref (Match phone / Light / Dark) in Settings, saved via src/appearance.ts.
+- Companion background uploads: Kotlin service posts directly to /api/readings/batch with base URL + JWT handed over via
+  CompanionGlucose.configure(); queue kept on failure.
+- iPhone "Apple Health" data source (source="health"): reads Blood Glucose from HealthKit every 5 min, skipping GlucoGuard's own samples.
+- History: periods "Day to Date" (step back 89 days), "By 7 days" (12 periods), "By 30 days" (3 periods), "By 90 days" (fixed). 3-day view removed.
+- Register name now required (validate_default). 158/158 backend tests.
+- Open: user asked for follower sources twiist Insight, Medtronic CareLink, Omnipod Discover/Glooko — explained (no public APIs; CareLink unofficial).
+
+## Iteration 11
+- New follower sources (backend/cloud_followers.py, ported from nightscout/nocturne connectors):
+  - twiist Insight: AWS Cognito follower login → follower-service.mytwiistportal.com /pwd/overviews + /pwd/{id}/package (glucose blob: base64 raw-deflate, 8-byte LE records since 2008-01-01, mg/dL×100).
+  - Medtronic CareLink (EU/US, country code, optional patient): password Auth0 login (usually CAPTCHA-blocked) or in-app Medtronic sign-in WebView
+    (POST /api/carelink/start → WebView intercepts com.medtronic.carepartner:/sso?code= → POST /api/carelink/finish), refresh token kept server-side (cl_refresh_token secret), DELETE /api/carelink signs out.
+  - Glooko / Omnipod DISCOVER (US/EU/CA/DE-FR): v2 sign_in session cookie → /api/v2/cgm/readings (wall-clock times converted with user tz).
+- Settings > Follower lists twiist, CareLink, Omnipod DISCOVER/Glooko with their own login cards (src/components/settings/CloudFollowerFields.tsx, CareLinkLogin.tsx).

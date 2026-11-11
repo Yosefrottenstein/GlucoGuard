@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 10 (name on register, Profile tab, dark mode, health source). Backend: 12/13 pytest pass. Register with name 'Anna Test' -> 201, GET /settings em_name 'Anna Test' (extra spaces collapsed). 'Al', '  A  ' and 41-char names -> 422. POST /emergency/test with a phone-SMS contact returned 200 and queued 'TEST - Anna Test's glucose is unknown...'. Batch source 'health' and settings source 'health' work. One failure: register with NO name field returns 201 and saves em_name ''. Frontend (375x667 web): the register name input and hint work; empty and 2-char names show 'Enter your name (at least 3 characters).'; a valid name goes to the email prompt and then Home. Profile works: avatar letter, name, @username, edit+save (toast 'Name saved'), short-name toast, email-sheet, password-sheet, sign out (token cleared, login shown). demo_user's Profile falls back to 'demo_user'/'D'. The Settings Account card and emergency-name-input are gone; there is no health UI on web. Dark mode works: dark backgrounds (#0E181A / #162326) on Login, Home, History, Stats, Settings, Profile, tab bar and sheets. Light returns to cream. The choice survives a reload (localStorage 'appearance'). 'Match phone' follows prefers-color-scheme, live. No deprecated packages (expo-av, expo-barcode-scanner, expo-background-fetch) found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/register", "issue": "When 'name' is left out, registration still succeeds (201) and saves em_name ''. Pydantic does not run field_validator on default values. The 3-char rule only applies when name is sent. Fix: make name required (name: str = Field(max_length=40)) or use Field(default='', validate_default=True). Reference: /app/backend/auth.py:39."},
+      {"endpoint": "PUT /api/settings", "issue": "em_name 'Al' (2 chars) is accepted with 200. Only the Profile UI checks the 3+ rule. The backend could enforce 3+ (or allow empty) so the rule is the same everywhere."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "LoginScreen register error", "issue": "The 'Enter your name...' error stays on screen after a valid name is typed, until the next submit. Cosmetic.", "testID": "auth-error", "priority": "LOW"},
+      {"component": "Toast vs Sheet", "issue": "A toast shown before a sheet opens appears under the sheet scrim (dimmed). Cosmetic.", "testID": "email-sheet-backdrop", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings (dark)", "issues": ["OFF switches (Upload to Nightscout / Tidepool) are almost invisible: the off track has about the same colour as the dark card (#162326). Use a lighter off-track colour (e.g. borderStrong #36504F) in dark mode."]},
+      {"screen": "Add entry sheet (dark, web)", "issues": ["The big numeric insulin input shows a light rectangular focus outline that looks odd on dark. Web-only; consider outlineStyle:'none' or a themed border."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter10_name_profile.py", "/app/test_reports/pytest/iter10.xml"],
+  "action_items": [
+    "auth.py Registration.name: make it required or set validate_default=True so a missing name gives 422 (today: 201 with empty em_name).",
+    "Optional: check em_name length (>=3) on PUT /api/settings as well.",
+    "Dark mode: give OFF switch tracks enough contrast on dark cards.",
+    "Old regression tests (test_auth_iter3, iter4-6) create TEST_ users and never delete them. Users from a 21:06 run are still in the DB (TEST_reg_9da0dc31, TEST_it4_*, TEST_it5*, TEST_it6*). Add teardown."
+  ],
+  "critical_code_review_comments": [
+    "settings.tsx is 793 lines; split it into section components (over the 700-line guideline).",
+    "theme.ts setColorScheme('unspecified') via Appearance.setColorScheme works, but useTheme already decides the theme from the pref, so the native call only matters for system UI and native components.",
+    "health.ts readHealth swallows all errors (returns 0) without logging; on device the user sees 'Imported 0 readings' even when the HealthKit query fails."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter10_name_profile.py (new)"],
+  "success_rate": {"backend": "92% (12/13)", "frontend": "100% of requested flows"},
+  "seed_data_creation": "Created and then deleted (by id, all collections) TEST_anna*, TEST_ui31484, and the users made by my iter3 regression run. demo_user is unchanged: em_name '', no email, light mode.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n0. pytest config uses xdist, and parallel workers break module fixtures (409 username taken). Accounts without an email get an email-reminder sheet ~1.5s after login: click email-reminder-later-button before tapping tabs. Appearance is stored in localStorage key 'appearance' on web. The Android companion and Apple Health features are native-only and were not tested.",
+  "rca_of_issue": "Missing name accepted: Registration.name has default='' and Pydantic v2 skips field validators on defaults unless validate_default=True, so the '<3 chars' check never runs when the key is left out."
+}

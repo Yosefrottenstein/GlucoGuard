@@ -9,7 +9,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api, GlucoseAlarm, Reminder, SensorType, Settings, Source, Status, Unit } from "@/src/api";
 import { Sheet } from "@/src/components/Sheet";
-import { useAuth } from "@/src/auth";
 import { SoundPicker } from "@/src/components/SoundPicker";
 import { stopSound } from "@/src/sounds";
 import { SENSORS } from "@/src/ble";
@@ -19,8 +18,6 @@ import { EmergencySection } from "@/src/components/settings/EmergencySection";
 import { useSettingsStyles } from "@/src/components/settings/styles";
 import { DexcomLoginFields, SecretKey, UploadsSection } from "@/src/components/settings/UploadsSection";
 import { ContactSheet } from "@/src/components/ContactSheet";
-import { PasswordSheet } from "@/src/components/PasswordSheet";
-import { EmailSheet, NO_EMAIL_WARNING } from "@/src/components/EmailPrompt";
 import { asTime, validTime } from "@/src/components/ScheduleEditor";
 import { useToast } from "@/src/components/Toast";
 import { Button, Card, Field, Hint, SectionTitle, ToggleRow } from "@/src/components/ui";
@@ -34,10 +31,12 @@ import {
   sensorEndsText,
 } from "@/src/sensorAlerts";
 import { format, isValid, parse } from "date-fns";
-import { spacing, useTheme } from "@/src/theme";
+import { spacing, useAppearancePref, useTheme } from "@/src/theme";
+import { saveAppearance } from "@/src/appearance";
+import { CloudFollowerFields } from "@/src/components/settings/CloudFollowerFields";
 import { CompanionCard } from "@/src/components/settings/CompanionCard";
 import { HealthCard } from "@/src/components/settings/HealthCard";
-import { healthPlatform } from "@/src/health";
+import { healthPlatform, enableHealthRead } from "@/src/health";
 import { isAndroid } from "@/src/phoneSms";
 
 const useStyles = useSettingsStyles;
@@ -53,18 +52,32 @@ const SOUND_TITLES: Record<string, string> = {
   missed: "Missed readings",
 };
 
-const EMPTY_SECRETS: Record<SecretKey, string> = { ns_secret: "", dexcom_password: "", libre_password: "", tp_password: "" };
+const EMPTY_SECRETS: Record<SecretKey, string> = {
+  ns_secret: "",
+  dexcom_password: "",
+  libre_password: "",
+  tp_password: "",
+  twiist_password: "",
+  cl_password: "",
+  glooko_password: "",
+};
 
 type SourceOpt = { value: Source; title: string; sub: string };
 const FOLLOWER: SourceOpt[] = [
   { value: "dexcom", title: "Dexcom Share", sub: "Dexcom G6, G7, ONE, ONE+ and Stelo with Share turned on" },
   { value: "libre", title: "LibreLinkUp", sub: "FreeStyle Libre 2, 2 Plus, 3 and 3 Plus" },
-  { value: "nightscout", title: "Nightscout", sub: "Medtronic (CareLink), Eversense, Medtrum, AAPS, Loop and any uploader" },
+  { value: "twiist", title: "twiist Insight", sub: "twiist pump with its CGM, using a twiist follower account" },
+  { value: "carelink", title: "Medtronic CareLink", sub: "MiniMed 780G, 770G, 740G and Simplera, as care partner or patient" },
+  { value: "glooko", title: "Omnipod DISCOVER / Glooko", sub: "Omnipod 5 and other pumps or CGMs that upload to Glooko" },
+  { value: "nightscout", title: "Nightscout", sub: "Eversense, Medtrum, AAPS, Loop and any uploader" },
 ];
 const MASTER: SourceOpt[] = [
   { value: "bluetooth", title: "Bluetooth sensor", sub: "Talk to the sensor directly, then upload to Nightscout and Tidepool" },
   ...(isAndroid
     ? [{ value: "companion" as Source, title: "Companion app", sub: "Read glucose from Dexcom, Libre, Omnipod, CamAPS and other apps on this phone" }]
+    : []),
+  ...(healthPlatform
+    ? [{ value: "health" as Source, title: "Apple Health", sub: "Use glucose that Dexcom, Libre and other apps save to Apple Health (can be delayed)" }]
     : []),
   { value: "manual", title: "Manual entry", sub: "Type finger-stick or sensor values yourself" },
   { value: "demo", title: "Demo sensor", sub: "Realistic sample data to try the app" },
@@ -74,11 +87,11 @@ const SENSOR_OPTIONS = (Object.keys(SENSORS) as SensorType[]).map((k) => ({ valu
 
 export default function SettingsScreen() {
   const styles = useStyles();
+  const appearance = useAppearancePref();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const bottomChrome = usesNativeTabs ? insets.bottom : 0;
   const toast = useToast();
-  const { username, signOut } = useAuth();
   const router = useRouter();
   const qc = useQueryClient();
 
@@ -100,9 +113,6 @@ export default function SettingsScreen() {
   const [reminderEdit, setReminderEdit] = useState<{ index: number; value: Reminder } | null>(null);
   const [gaEdit, setGaEdit] = useState<{ index: number; value: GlucoseAlarm; text: string } | null>(null);
   const [startText, setStartText] = useState("");
-  const [pwOpen, setPwOpen] = useState(false);
-  const [emailOpen, setEmailOpen] = useState(false);
-  const me = useQuery({ queryKey: ["me"], queryFn: () => api<{ username: string; email: string | null }>("/auth/me") });
 
   useEffect(() => {
     if (settings.data && !dirty) {
@@ -272,27 +282,18 @@ export default function SettingsScreen() {
         contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: bottomChrome + 32 }}
         keyboardShouldPersistTaps="handled"
       >
-        <SectionTitle>Account</SectionTitle>
-        <Card style={{ paddingVertical: spacing.xs }}>
-          <View style={styles.syncRow}>
-            <Ionicons name="person-circle" size={28} color={colors.muted} />
-            <Text style={styles.syncText} testID="account-username">
-              Signed in as {username || "you"}
-            </Text>
-            <Button title="Sign out" kind="secondary" onPress={signOut} testID="account-signout-button" />
-          </View>
-          <Button title="Change password" kind="secondary" onPress={() => setPwOpen(true)} testID="account-password-button" style={{ marginVertical: spacing.sm }} />
-          <Pressable testID="account-email-row" onPress={() => setEmailOpen(true)} style={[styles.contactRow, styles.topBorder]}>
-            <Ionicons name="mail" size={22} color={me.data?.email ? colors.brandPrimary : colors.warning} />
-            <View style={{ flex: 1, paddingVertical: spacing.sm }}>
-              <Text style={styles.radioTitle}>Recovery email</Text>
-              <Text style={styles.radioSub} testID="account-email-text">
-                {me.data?.email ?? NO_EMAIL_WARNING}
-              </Text>
-            </View>
-            <Text style={[styles.radioTitle, { color: colors.brandPrimary }]}>{me.data?.email ? "Change" : "Add"}</Text>
-          </Pressable>
-        </Card>
+        <SectionTitle>Appearance</SectionTitle>
+        <ChipRow
+          options={[
+            { value: "system", label: "Match phone" },
+            { value: "light", label: "Light" },
+            { value: "dark", label: "Dark" },
+          ]}
+          value={appearance}
+          onChange={saveAppearance}
+          testIDPrefix="appearance"
+        />
+        <Hint>Dark uses deep, low-glare colours for checking glucose at night.</Hint>
 
         <SectionTitle>Glucose unit</SectionTitle>
         <ChipRow
@@ -343,6 +344,21 @@ export default function SettingsScreen() {
           ))}
         </Card>
         {draft.source === "companion" && <CompanionCard />}
+        {draft.source === "health" && (
+          <Card style={styles.subCard} testID="health-source-card">
+            <Text style={[styles.radioSub, { marginVertical: spacing.sm }]}>
+              GlucoGuard checks Apple Health every few minutes while it runs. Dexcom saves to Health with about a 3-hour delay, so use this as
+              a backup, not for real-time alarms.
+            </Text>
+            <Button
+              title="Allow reading from Apple Health"
+              kind="secondary"
+              onPress={() => enableHealthRead().then((n) => toast(`Imported ${n} readings`, "success")).catch((e: Error) => toast(e.message, "error"))}
+              testID="health-read-button"
+              style={{ marginBottom: spacing.sm }}
+            />
+          </Card>
+        )}
         {draft.source === "bluetooth" && (
           <Card style={styles.subCard} testID="bluetooth-sensor-card">
             <View style={styles.inlineChips}>
@@ -401,6 +417,20 @@ export default function SettingsScreen() {
             />
           </Card>
         )}
+        <CloudFollowerFields
+          draft={draft}
+          set={set}
+          secrets={secrets}
+          setSecret={setSecret}
+          secretPh={secretPh}
+          beforeSignIn={async () => {
+            if (dirty) await save.mutateAsync();
+          }}
+          onSignedIn={() => {
+            setDirty(false);
+            qc.invalidateQueries();
+          }}
+        />
         {draft.source === "nightscout" && <Hint>Uses the Nightscout address and secret in the Nightscout section below.</Hint>}
         {draft.source === "dexcom" && <Hint>Turn on Share in your Dexcom app and add at least one follower.</Hint>}
         {draft.source === "libre" && (
@@ -695,8 +725,6 @@ export default function SettingsScreen() {
         )}
       </Sheet>
 
-      <PasswordSheet visible={pwOpen} onClose={() => setPwOpen(false)} />
-      {emailOpen && <EmailSheet visible current={me.data?.email} onClose={() => setEmailOpen(false)} />}
       <ContactSheet
         visible={editing !== null}
         contact={editing !== null && editing >= 0 ? draft.em_contacts[editing] : null}

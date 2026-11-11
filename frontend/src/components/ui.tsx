@@ -49,7 +49,7 @@ export function ToggleRow({
         testID={testID}
         value={value}
         onValueChange={onChange}
-        trackColor={{ true: colors.brandPrimary, false: colors.surfaceTertiary }}
+        trackColor={{ true: colors.brandPrimary, false: colors.borderStrong }}
         thumbColor={colors.surfaceSecondary}
       />
     </View>

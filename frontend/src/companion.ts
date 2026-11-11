@@ -6,12 +6,20 @@ import { Platform } from "react-native";
 import { api } from "./api";
 import { queryClient } from "./query-client";
 
-type Native = { hasAccess(): boolean; openAccessSettings(): void; drain(): string; lastSource(): string | null };
+type Native = {
+  hasAccess(): boolean;
+  openAccessSettings(): void;
+  drain(): string;
+  lastSource(): string | null;
+  configure(baseUrl: string, token: string): void;
+};
 const native = Platform.OS === "android" ? requireOptionalNativeModule<Native>("CompanionGlucose") : null;
 
 export const companionSupported = !!native;
 export const companionHasAccess = () => !!native?.hasAccess();
 export const openCompanionAccess = () => native?.openAccessSettings();
+/** Empty url/token turns background uploading off (e.g. signed out or another source chosen). */
+export const configureCompanion = (baseUrl: string, token: string | null) => native?.configure(baseUrl, token ?? "");
 
 const APP_NAMES: [string, string][] = [
   ["com.dexcom.", "Dexcom"],

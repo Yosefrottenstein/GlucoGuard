@@ -31,7 +31,7 @@ def hdr(t):
 def tmp_user():
     # throwaway user so demo_user's password is never at risk mid-suite
     u = f"TEST_it6_{uuid.uuid4().hex[:8]}"
-    r = requests.post(f"{API}/auth/register", json={"username": u, "password": "origpass123"}, timeout=20)
+    r = requests.post(f"{API}/auth/register", json={"username": u, "password": "origpass123", "name": "Test User"}, timeout=20)
     assert r.status_code in (200, 201), r.text
     return {"username": u, "password": "origpass123", "token": r.json()["access_token"]}
 
@@ -102,7 +102,7 @@ CLOUD_C = {"name": "TEST_Cloud", "phone": "+447700900444", "sms_via": "cloud",
 @pytest.fixture(scope="module")
 def em_user():
     u = f"TEST_it6e_{uuid.uuid4().hex[:8]}"
-    r = requests.post(f"{API}/auth/register", json={"username": u, "password": "origpass123"}, timeout=20)
+    r = requests.post(f"{API}/auth/register", json={"username": u, "password": "origpass123", "name": "Test User"}, timeout=20)
     t = r.json()["access_token"]
     r = requests.put(f"{API}/settings", headers=hdr(t), json={"em_contacts": [PHONE_C, CLOUD_C]})
     assert r.status_code == 200, r.text

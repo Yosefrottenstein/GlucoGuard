@@ -33,6 +33,8 @@ class GlucoseNotificationService : NotificationListenerService() {
     } catch (_: Throwable) {}
     val reading = parse(texts) ?: return
     store(applicationContext, pkg, reading.first, reading.second)
+    val ctx = applicationContext
+    Thread { uploadPending(ctx) }.start()
   }
 
   private fun collect(v: View, out: MutableList<String>) {
@@ -97,5 +99,57 @@ class GlucoseNotificationService : NotificationListenerService() {
     }
 
     fun lastPackage(ctx: Context): String? = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("last_pkg", null)
+
+    private fun direction(perMin: Double) = when {
+      perMin <= -3 -> "DoubleDown"; perMin <= -2 -> "SingleDown"; perMin <= -1 -> "FortyFiveDown"
+      perMin < 1 -> "Flat"; perMin < 2 -> "FortyFiveUp"; perMin < 3 -> "SingleUp"; else -> "DoubleUp"
+    }
+
+    /** Background upload straight to the GlucoGuard server, so readings, alarms and emergency messages keep
+     *  flowing while the app is closed. Keeps ~1 reading per 5 min; leaves items queued if offline. */
+    fun uploadPending(ctx: Context) {
+      val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      val base = prefs.getString("base_url", "") ?: ""
+      val token = prefs.getString("token", "") ?: ""
+      if (base.isEmpty() || token.isEmpty()) return
+      val items = JSONArray(drain(ctx))
+      if (items.length() == 0) return
+      var lastTs = prefs.getLong("last_up_ts", 0L)
+      var lastSgv = prefs.getInt("last_up_sgv", 0)
+      val out = JSONArray()
+      val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+      for (i in 0 until items.length()) {
+        val it = items.getJSONObject(i)
+        val ts = it.getLong("ts"); val sgv = it.getInt("sgv")
+        if (ts - lastTs < 270_000) continue
+        val dir = if (lastTs > 0 && ts - lastTs < 900_000) direction((sgv - lastSgv) / ((ts - lastTs) / 60000.0)) else "NONE"
+        out.put(JSONObject().put("ts", iso.format(java.util.Date(ts))).put("sgv", sgv).put("direction", dir))
+        lastTs = ts; lastSgv = sgv
+      }
+      if (out.length() == 0) return
+      try {
+        val conn = java.net.URL("$base/readings/batch").openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.connectTimeout = 15000; conn.readTimeout = 15000
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        conn.outputStream.use { os -> os.write(JSONObject().put("source", "companion").put("readings", out).toString().toByteArray()) }
+        val code = conn.responseCode
+        conn.disconnect()
+        if (code in 200..299) {
+          prefs.edit().putLong("last_up_ts", lastTs).putInt("last_up_sgv", lastSgv).apply()
+          return
+        }
+      } catch (_: Throwable) {}
+      // failed: put the raw items back so the next notification (or the app) retries
+      synchronized(this) {
+        val now = JSONArray(prefs.getString("pending", "[]"))
+        val merged = JSONArray()
+        for (i in 0 until items.length()) merged.put(items.get(i))
+        for (i in 0 until now.length()) merged.put(now.get(i))
+        prefs.edit().putString("pending", merged.toString()).apply()
+      }
+    }
   }
 }

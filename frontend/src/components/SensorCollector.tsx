@@ -6,8 +6,9 @@ import { api, Settings } from "@/src/api";
 import { bleSupported } from "@/src/ble";
 import { setG7ActivationHandler, startG7, stopG7 } from "@/src/g7";
 import { startLibre2, stopLibre2 } from "@/src/libre2";
-import { drainCompanion } from "@/src/companion";
-import { healthPlatform, syncHealth } from "@/src/health";
+import { configureCompanion, drainCompanion } from "@/src/companion";
+import { getToken } from "@/src/auth";
+import { healthPlatform, readHealth, syncHealth } from "@/src/health";
 import { drainSmsOutbox, phoneSmsSupported } from "@/src/phoneSms";
 import { scheduleReminders, scheduleSensorAlerts } from "@/src/sensorAlerts";
 
@@ -50,10 +51,23 @@ export function SensorCollector() {
   const companion = s?.source === "companion";
   useEffect(() => {
     if (!companion) return;
+    // hand the server address + sign-in to the Android listener so it uploads even when the app is closed
+    configureCompanion(`${process.env.EXPO_PUBLIC_BACKEND_URL}/api`, getToken());
     drainCompanion();
     const t = setInterval(drainCompanion, 60000);
-    return () => clearInterval(t);
+    return () => {
+      clearInterval(t);
+      configureCompanion("", null);
+    };
   }, [companion]);
+
+  const healthSource = healthPlatform && s?.source === "health";
+  useEffect(() => {
+    if (!healthSource) return;
+    readHealth();
+    const t = setInterval(readHealth, 5 * 60000);
+    return () => clearInterval(t);
+  }, [healthSource]);
 
   useEffect(() => {
     if (!healthPlatform) return;
